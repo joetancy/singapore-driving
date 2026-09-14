@@ -10,9 +10,9 @@ export function stepCar(state,input,dt,onRoad=true){
  if(brake)accel=state.speed>.2?-16:-4.2;
  if(!throttle&&!brake)accel=-Math.sign(state.speed)*(1.25+Math.abs(state.speed)*.018);
  if(handbrake)accel-=Math.sign(state.speed)*22;
- accel-=state.speed*Math.abs(state.speed)*.0024;
+ accel-=state.speed*Math.abs(state.speed)*.0014;
  if(!onRoad)accel-=state.speed*.65;
- const before=state.speed;state.speed=clamp(state.speed+accel*dt,-8.3,onRoad?33.3:9);
+ const before=state.speed;state.speed=clamp(state.speed+accel*dt,-8.3,onRoad?250/3.6:9);
  if(!throttle&&!brake&&before*state.speed<0)state.speed=0;
  if(Math.abs(state.speed)<.05&&!throttle&&!brake)state.speed=0;
  const desired=(input.right?1:0)-(input.left?1:0);
