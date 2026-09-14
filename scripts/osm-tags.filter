@@ -1,0 +1,13 @@
+w/highway
+w/building
+w/building:part
+r/building
+r/building:part
+w/natural=water
+r/natural=water
+w/waterway=riverbank
+r/waterway=riverbank
+w/leisure=park,garden
+r/leisure=park,garden
+w/landuse=grass,forest,recreation_ground
+r/landuse=grass,forest,recreation_ground
