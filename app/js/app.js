@@ -58,7 +58,11 @@ const lookTarget = new THREE.Vector3(),
   cameraTarget = new THREE.Vector3(),
   sunTarget = new THREE.Object3D();
 const worldMaterials = {},
-  buildingNightUniform = { value: 0 };
+  buildingNightUniform = { value: 0 },
+  tunnelCutout = {
+    center: { value: new THREE.Vector2() },
+    radius: { value: 0 },
+  };
 let surfaces = roadIndex([]), activeRoad = null, spawnSelection = null;
 function toast(text) {
   $("toast").textContent = text;
@@ -541,7 +545,11 @@ function getNearestRoad(x, z) {
   }
   return best;
 }
-function blocked(x, z, y) {
+function blocked(x, z, y, road = null) {
+  // Imported buildings occasionally overlap a mapped road. The road contract
+  // wins at the point of contact so bad footprints cannot make a route
+  // impassable; off-road collisions remain unchanged.
+  if (road && road.d <= road.width / 2 + 0.6) return false;
   const boxRadius = 2.3;
   for (const b of obstacles) {
     if (b.base > y + 1.7 || b.height < y) continue;
@@ -628,6 +636,14 @@ function setHudHidden(value) {
     value ? "Show driving interface" : "Hide driving interface",
   );
 }
+function setMinimapCollapsed(value) {
+  const panel = document.querySelector(".map-panel"),
+    button = $("minimap-toggle");
+  panel.classList.toggle("collapsed", value);
+  button.textContent = value ? "+" : "−";
+  button.setAttribute("aria-expanded", String(!value));
+  button.setAttribute("aria-label", value ? "Expand minimap" : "Collapse minimap");
+}
 function bindControls() {
   const valid = [
     "KeyW",
@@ -692,6 +708,9 @@ function bindControls() {
   $("info").addEventListener("close", () => setPaused(wasPausedBeforeInfo));
   $("spawn-picker").onclick = openSpawnPicker;
   $("minimap").onclick = openSpawnPicker;
+  $("minimap-toggle").onclick = () =>
+    setMinimapCollapsed(!document.querySelector(".map-panel").classList.contains("collapsed"));
+  setMinimapCollapsed(matchMedia("(max-width: 760px)").matches);
   $("night-toggle").onclick = () => setNight(!night);
   $("hud-toggle").onclick = () =>
     setHudHidden(!document.documentElement.classList.contains("hud-hidden"));
@@ -772,7 +791,12 @@ function animate() {
       const water =
         (!contact || contact.y < 0.1) &&
         waterPolygons.some((r) => inPolygon(state.x, state.z, r));
-      if (edge || outside || water || blocked(state.x, state.z, contact?.y ?? smoothGround)) {
+      if (edge || outside || water || blocked(
+        state.x,
+        state.z,
+        contact?.y ?? smoothGround,
+        contact,
+      )) {
         state.x = oldX;
         state.z = oldZ;
         state.speed = 0;
@@ -795,6 +819,8 @@ function animate() {
     }
   }
   car.position.set(state.x, smoothGround + 0.08, state.z);
+  tunnelCutout.center.value.set(state.x, state.z);
+  tunnelCutout.radius.value = smoothGround < -0.3 ? 42 : 0;
   car.rotation.y = -state.yaw;
   const slope = activeRoad ? (activeRoad.b[2] - activeRoad.a[2]) /
     Math.hypot(activeRoad.b[0] - activeRoad.a[0], activeRoad.b[1] - activeRoad.a[1]) : 0;
@@ -866,9 +892,30 @@ async function init() {
     sunLight.name = "sun";
     sunLight.target = sunTarget;
     scene.add(sunLight, sunTarget);
+    const groundMaterial = new THREE.MeshStandardMaterial({
+      color: "#9daa94",
+      roughness: 1,
+      side: THREE.DoubleSide,
+    });
+    groundMaterial.onBeforeCompile = (shader) => {
+      shader.uniforms.uTunnelCenter = tunnelCutout.center;
+      shader.uniforms.uTunnelRadius = tunnelCutout.radius;
+      shader.vertexShader = "varying vec2 vTunnelWorld;\n" + shader.vertexShader;
+      shader.vertexShader = shader.vertexShader.replace(
+        "#include <worldpos_vertex>",
+        "#include <worldpos_vertex>\nvTunnelWorld = (modelMatrix * vec4(transformed, 1.0)).xz;",
+      );
+      shader.fragmentShader =
+        "uniform vec2 uTunnelCenter; uniform float uTunnelRadius; varying vec2 vTunnelWorld;\n" +
+        shader.fragmentShader;
+      shader.fragmentShader = shader.fragmentShader.replace(
+        "#include <clipping_planes_fragment>",
+        "#include <clipping_planes_fragment>\nif (uTunnelRadius > 0.0 && distance(vTunnelWorld, uTunnelCenter) < uTunnelRadius) discard;",
+      );
+    };
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(160000, 160000),
-      new THREE.MeshStandardMaterial({ color: "#9daa94", roughness: 1 }),
+      groundMaterial,
     );
     ground.rotation.x = -Math.PI / 2;
     ground.position.y = -0.025;

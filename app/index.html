@@ -91,7 +91,17 @@
         aria-label="Live minimap. Use the map button to choose a starting road."
       >
         <div class="map-heading">
-          <span>YOUR SURROUNDINGS</span><span class="north">N ↑</span>
+          <span>YOUR SURROUNDINGS</span>
+          <span class="map-heading-actions">
+            <span class="north">N ↑</span>
+            <button
+              id="minimap-toggle"
+              type="button"
+              aria-controls="minimap"
+              aria-expanded="true"
+              aria-label="Collapse minimap"
+            >−</button>
+          </span>
         </div>
         <svg
           id="minimap"
