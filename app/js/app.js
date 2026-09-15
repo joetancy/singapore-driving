@@ -95,14 +95,35 @@ async function json(url) {
 function point(p) {
   return projection(p);
 }
+function bridgeDeck(a, b, width, top) {
+  const dx = b[0] - a[0],
+    dz = b[1] - a[1],
+    length = Math.hypot(dx, dz),
+    geometry = new THREE.BoxGeometry(width, 0.7, length);
+  geometry.rotateY(Math.atan2(dx, dz));
+  geometry.translate((a[0] + b[0]) / 2, top - 0.35, (a[1] + b[1]) / 2);
+  return geometry;
+}
 function createChunk(data) {
   const group = new THREE.Group(),
     buildingGeo = [],
+    bridgeGeo = [],
     roadGeo = [],
     pavementGeo = [],
     markGeo = [],
     segments = [],
-    blocks = [];
+    blocks = [],
+    buildingBases = data.features
+      .filter((f) => {
+        const p = f.properties || {};
+        return (
+          f.geometry.type !== "LineString" &&
+          f.geometry.type !== "MultiLineString" &&
+          p.building &&
+          !p["building:part"]
+        );
+      })
+      .flatMap((f) => ringsOf(f).map((raw) => raw.map((ring) => ring.map(point))));
   for (const f of data.features) {
     const props = f.properties || {};
     if (
@@ -154,6 +175,7 @@ function createChunk(data) {
             source: f.id,
           };
           segments.push(segment);
+          if (y > 0) bridgeGeo.push(bridgeDeck(a, b, width + 4, y + 0.01));
           pavementGeo.push(quad(a, b, width + 4, y + 0.025, "#b4bdb8"));
           roadGeo.push(quad(a, b, width, roadY, "#48575b"));
           const dx = (b[0] - a[0]) / len,
@@ -190,6 +212,11 @@ function createChunk(data) {
       for (const raw of ringsOf(f)) {
         const rings = raw.map((r) => r.map(point));
         if (rings[0].length < 4) continue;
+        if (
+          props["building:part"] &&
+          buildingBases.some((base) => inPolygon(rings[0][0][0], rings[0][0][1], base))
+        )
+          continue;
         const hash = String(f.id || height)
             .split("")
             .reduce((a, c) => a + c.charCodeAt(0), 0),
@@ -219,6 +246,7 @@ function createChunk(data) {
     }
   }
   mergeInto(group, pavementGeo.filter(Boolean), worldMaterials.pavement);
+  mergeInto(group, bridgeGeo, worldMaterials.bridge);
   mergeInto(group, roadGeo.filter(Boolean), worldMaterials.road);
   mergeInto(group, markGeo.filter(Boolean), worldMaterials.mark);
   mergeInto(group, buildingGeo, worldMaterials.building, true);
@@ -914,6 +942,10 @@ async function init() {
       vertexColors: true,
       roughness: 1,
       side: THREE.DoubleSide,
+    });
+    worldMaterials.bridge = new THREE.MeshStandardMaterial({
+      color: "#718184",
+      roughness: 0.9,
     });
     worldMaterials.mark = new THREE.MeshBasicMaterial({
       vertexColors: true,
