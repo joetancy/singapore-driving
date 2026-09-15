@@ -13,7 +13,7 @@ from shapely.ops import unary_union, polygonize
 from shapely.validation import make_valid
 
 DRIVABLE={'motorway','motorway_link','trunk','trunk_link','primary','primary_link','secondary','secondary_link','tertiary','tertiary_link','residential','unclassified','living_street','service'}
-ROOT=Path(__file__).resolve().parents[1]/'dist'/'data'
+ROOT=Path(__file__).resolve().parents[1]/'public'/'data'
 def fc(fs):return {'type':'FeatureCollection','features':fs}
 def write(path,obj):path.write_text(json.dumps(obj,separators=(',',':')))
 def parts(geom,types):

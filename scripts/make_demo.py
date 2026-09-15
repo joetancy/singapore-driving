@@ -2,7 +2,7 @@
 import json, math, random
 from pathlib import Path
 random.seed(23)
-ROOT = Path(__file__).resolve().parents[1] / 'dist' / 'data'
+ROOT = Path(__file__).resolve().parents[1] / 'public' / 'data'
 ROOT.mkdir(parents=True, exist_ok=True)
 CENTER = [103.851, 1.284]
 def ll(p): return [round(CENTER[0]+p[0]/111292,7), round(CENTER[1]-p[1]/111320,7)]
