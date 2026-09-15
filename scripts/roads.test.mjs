@@ -41,6 +41,13 @@ assert.equal(heights("left-approach").at(-1), 4);
 assert.equal(heights("right-approach")[0], 4);
 assert([...regression.samples.values()].flat().every((p) => p[2] >= 0));
 
+const layered = prepareRoads([
+  road("layer-deck", [[103.852, 1.29], [103.8521, 1.29]], { layer: 1 }),
+  road("layer-ramp", [[103.8521, 1.29], [103.8526, 1.29]]),
+], center);
+assert.equal(layered.samples.get("layer-ramp")[0][2], 4);
+assert.equal(layered.samples.get("layer-ramp").at(-1)[2], 0);
+
 const roads = [
   { id: "ground", featureId: "ground", connections: ["bridge"], a: [0, 0, 0], b: [100, 0, 0], width: 10 },
   { id: "bridge", featureId: "bridge", connections: ["ground"], a: [0, 0, 4], b: [100, 0, 4], width: 10 },

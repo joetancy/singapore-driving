@@ -54,8 +54,8 @@ export function prepareRoads(features, center) {
     }).filter(({ score }) => score >= Math.cos(Math.PI / 6)).sort((a, b) => b.score - a.score);
     return matches.length && (matches.length === 1 || matches[0].score - matches[1].score >= 0.03) ? matches[0].other : null;
   };
-  // A bridge may lift only one near-straight continuation; junction branches stay grounded.
-  const queue = edges.filter((e) => e.h > 0 && e.f.properties.bridge && e.f.properties.bridge !== "no")
+  // An elevated deck may lift only one near-straight continuation; junction branches stay grounded.
+  const queue = edges.filter((e) => e.h > 0)
     .flatMap((e) => [[e, e.a], [e, e.b]]);
   for (let i = 0; i < queue.length; i++) {
     const [e, n] = queue[i], next = continuation(e, n);
