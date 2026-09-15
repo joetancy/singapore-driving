@@ -55,11 +55,13 @@ let state = { x: 0, z: 0, yaw: 0, speed: 0, steer: 0 },
   clock = new THREE.Clock(),
   smoothGround = 0,
   nearRoad = null,
-  frame = 0;
+  frame = 0,
+  driving = false;
 const lookTarget = new THREE.Vector3(),
   cameraTarget = new THREE.Vector3(),
   sunTarget = new THREE.Object3D();
-const worldMaterials = {};
+const worldMaterials = {},
+  buildingNightUniform = { value: 0 };
 function toast(text) {
   $("toast").textContent = text;
   $("toast").classList.add("show");
@@ -68,6 +70,7 @@ function toast(text) {
 }
 function setNight(value) {
   night = value;
+  buildingNightUniform.value = night ? 1 : 0;
   document.documentElement.classList.toggle("night", night);
   $("night-toggle").setAttribute(
     "aria-label",
@@ -135,7 +138,7 @@ function createChunk(data) {
             .split("")
             .reduce((n, c) => n + c.charCodeAt(0), 0) %
             17) *
-            0.0001;
+            0.004;
       for (const line of lines) {
         const pts = line.map(point);
         for (let i = 0; i < pts.length - 1; i++) {
@@ -753,6 +756,7 @@ function resetCar(announce = true) {
 }
 function setPaused(value) {
   paused = value;
+  setDriving(false);
   keys.clear();
   touches.clear();
   document
@@ -765,6 +769,11 @@ function setPaused(value) {
   );
   if (ready)
     toast(paused ? "Paused — press Esc to resume" : "Back to the road");
+}
+function setDriving(value) {
+  if (driving === value) return;
+  driving = value;
+  document.documentElement.classList.toggle("driving", driving);
 }
 function bindControls() {
   const valid = [
@@ -924,6 +933,7 @@ function animate() {
       distance += Math.hypot(state.x - oldX, state.z - oldZ) / 1000;
     }
   }
+  setDriving(!paused && Math.abs(state.speed) > 0.5);
   const ground =
     nearRoad && nearRoad.d < nearRoad.width / 2 + 2 ? nearRoad.y : 0;
   smoothGround += (ground - smoothGround) * (1 - Math.exp(-6 * dt));
@@ -977,6 +987,7 @@ async function init() {
       canvas,
       antialias: true,
       powerPreference: "high-performance",
+      logarithmicDepthBuffer: true,
     });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.6));
     renderer.shadowMap.enabled = false;
@@ -985,7 +996,7 @@ async function init() {
     scene = new THREE.Scene();
     scene.background = new THREE.Color("#b2d2d6");
     scene.fog = new THREE.FogExp2("#b2d2d6", 0.00052);
-    camera = new THREE.PerspectiveCamera(60, 1, 0.15, 5000);
+    camera = new THREE.PerspectiveCamera(60, 1, 0.15, 3000);
     skyLight = new THREE.HemisphereLight("#d9eeef", "#737765", 2.25);
     scene.add(skyLight);
     sunLight = new THREE.DirectionalLight("#fff0cb", 3.0);
@@ -1030,6 +1041,7 @@ async function init() {
       side: THREE.DoubleSide,
     });
     worldMaterials.building.onBeforeCompile = (shader) => {
+      shader.uniforms.uNight = buildingNightUniform;
       shader.vertexShader =
         "varying vec3 vFacadePosition; varying vec3 vFacadeNormal;\n" +
         shader.vertexShader;
@@ -1038,11 +1050,15 @@ async function init() {
         "#include <begin_vertex>\nvFacadePosition=(modelMatrix*vec4(position,1.0)).xyz; vFacadeNormal=normalize(mat3(modelMatrix)*normal);",
       );
       shader.fragmentShader =
-        "varying vec3 vFacadePosition; varying vec3 vFacadeNormal;\n" +
+        "uniform float uNight; varying vec3 vFacadePosition; varying vec3 vFacadeNormal;\n" +
         shader.fragmentShader;
       shader.fragmentShader = shader.fragmentShader.replace(
         "#include <color_fragment>",
         "#include <color_fragment>\nif(abs(vFacadeNormal.y)<0.5 && vFacadePosition.y>3.5){float u=fract((vFacadePosition.x+vFacadePosition.z)*0.22);float v=fract(vFacadePosition.y*0.28);float windowMask=step(0.18,u)*(1.0-step(0.81,u))*step(0.22,v)*(1.0-step(0.80,v));diffuseColor.rgb=mix(diffuseColor.rgb,diffuseColor.rgb*vec3(0.59,0.76,0.80),windowMask*0.60);}",
+      );
+      shader.fragmentShader = shader.fragmentShader.replace(
+        "#include <emissivemap_fragment>",
+        "#include <emissivemap_fragment>\nif(abs(vFacadeNormal.y)<0.5 && vFacadePosition.y>3.5){float u=fract((vFacadePosition.x+vFacadePosition.z)*0.22);float v=fract(vFacadePosition.y*0.28);float windowMask=step(0.18,u)*(1.0-step(0.81,u))*step(0.22,v)*(1.0-step(0.80,v));totalEmissiveRadiance+=windowMask*uNight*vec3(1.0,0.52,0.16)*1.65;}",
       );
     };
     manifest = await json("./data/manifest.json");

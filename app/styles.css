@@ -42,6 +42,37 @@ canvas:focus-visible {
   height: 100%;
   outline: none;
 }
+.topbar,
+.location,
+.compass,
+.map-panel,
+.keyboard-hint,
+.credits {
+  transition:
+    opacity 0.25s ease,
+    transform 0.25s ease;
+}
+.driving .topbar,
+.driving .location,
+.driving .compass,
+.driving .map-panel,
+.driving .keyboard-hint,
+.driving .credits {
+  opacity: 0;
+  pointer-events: none;
+}
+.driving .topbar,
+.driving .location,
+.driving .compass {
+  transform: translateY(-18px);
+}
+.driving .map-panel {
+  transform: translateX(18px);
+}
+.driving .keyboard-hint,
+.driving .credits {
+  transform: translateY(18px);
+}
 .topbar {
   position: absolute;
   top: 0;
