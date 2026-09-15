@@ -10,7 +10,10 @@ export const nominalHeight = (p) => {
   if ((p.tunnel && p.tunnel !== "no") || layer < 0) return Math.min(-4, layer * 4);
   return p.bridge && p.bridge !== "no" ? Math.max(4, layer * 4) : Math.max(0, layer * 4);
 };
-export const roadVisible = (p) => !((p.tunnel && p.tunnel !== "no") || Number(p.layer) < 0);
+// Tunnels are rendered below the terrain and exposed through a local terrain
+// cutout while the car is underground. They still need samples for spawning,
+// surface contact and entrance/exit ramps.
+export const roadVisible = () => true;
 const key = (p) => p.slice(0, 2).map((v) => v.toFixed(7)).join(",");
 const length = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 const mix = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
@@ -54,17 +57,24 @@ export function prepareRoads(features, center) {
     }).filter(({ score }) => score >= Math.cos(Math.PI / 6)).sort((a, b) => b.score - a.score);
     return matches.length && (matches.length === 1 || matches[0].score - matches[1].score >= 0.03) ? matches[0].other : null;
   };
-  // An elevated deck may lift only one near-straight continuation; junction branches stay grounded.
-  const queue = edges.filter((e) => e.h > 0)
+  // A bridge or tunnel may pull only one near-straight continuation toward its
+  // level. Junction branches stay at their declared height. This creates a
+  // driveable grade at portals instead of a four-metre vertical step.
+  const queue = edges.filter((e) => Math.abs(e.h) > 0.00001)
     .flatMap((e) => [[e, e.a], [e, e.b]]);
   for (let i = 0; i < queue.length; i++) {
     const [e, n] = queue[i], next = continuation(e, n);
     if (!next) continue;
     const far = next.a === n ? next.b : next.a;
     const nearHeight = heightAt(e, n);
-    if (nearHeight > heightAt(next, n) + 0.00001) setHeight(next, n, nearHeight);
-    const farHeight = Math.max(next.h, nearHeight - next.length * maxGrade);
-    if (farHeight > heightAt(next, far) + 0.00001) {
+    const direction = Math.sign(nearHeight - next.h);
+    if (!direction) continue;
+    if (direction * (nearHeight - heightAt(next, n)) > 0.00001)
+      setHeight(next, n, nearHeight);
+    const farHeight = direction > 0
+      ? Math.max(next.h, nearHeight - next.length * maxGrade)
+      : Math.min(next.h, nearHeight + next.length * maxGrade);
+    if (direction * (farHeight - heightAt(next, far)) > 0.00001) {
       setHeight(next, far, farHeight);
       queue.push([next, far]);
     }

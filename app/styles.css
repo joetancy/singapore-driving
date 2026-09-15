@@ -302,6 +302,22 @@ h1 span {
   letter-spacing: 1.2px;
   color: #a8c1c7;
 }
+.map-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+#minimap-toggle {
+  display: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid #bafa9c55;
+  border-radius: 8px;
+  background: #ffffff10;
+  color: var(--mint);
+  line-height: 1;
+}
 .north {
   color: var(--mint);
 }
@@ -654,7 +670,22 @@ dd {
   }
   .map-heading {
     font-size: 8px;
-    padding: 12px 12px 0;
+    padding: 7px 7px 0 12px;
+    align-items: center;
+  }
+  #minimap-toggle {
+    display: inline-grid;
+    place-items: center;
+  }
+  .map-panel.collapsed {
+    width: 160px;
+  }
+  .map-panel.collapsed .map-heading {
+    padding-bottom: 7px;
+  }
+  .map-panel.collapsed #minimap,
+  .map-panel.collapsed .map-footer {
+    display: none;
   }
   .map-panel svg {
     height: 128px;

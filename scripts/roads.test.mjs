@@ -21,14 +21,16 @@ const regression = prepareRoads([
   road("test-bridge", [junction, bridgeEnd], { bridge: "yes" }),
   road("right-approach", [bridgeEnd, [103.85055, 1.29]]),
   road("side-road", [bridgeEnd, [103.8503, 1.29008]]),
-  road("surface-by-tunnel", [[103.851, 1.29], [103.8512, 1.29]]),
+  road("surface-by-tunnel", [[103.8506, 1.29], [103.8512, 1.29]]),
   road("tunnel", [[103.8512, 1.29], [103.8514, 1.29]], { tunnel: "yes", layer: -1 }),
 ], center);
 const heights = (id) => regression.samples.get(id).map((p) => p[2]);
-assert.equal(heights("tunnel").length, 0);
-assert.equal(roadVisible({ tunnel: "yes" }), false);
-assert.equal(roadVisible({ layer: -1 }), false);
-assert(heights("surface-by-tunnel").every((h) => h === 0));
+assert(heights("tunnel").length >= 2);
+assert.equal(roadVisible({ tunnel: "yes" }), true);
+assert.equal(roadVisible({ layer: -1 }), true);
+assert(heights("tunnel").every((h) => h === -4));
+assert.equal(heights("surface-by-tunnel").at(-1), -4);
+assert.equal(heights("surface-by-tunnel")[0], 0);
 assert(heights("side-road").every((h) => h === 0));
 for (const id of ["left-approach", "test-bridge", "right-approach"]) {
   const samples = regression.samples.get(id);
@@ -39,7 +41,7 @@ for (const id of ["left-approach", "test-bridge", "right-approach"]) {
 }
 assert.equal(heights("left-approach").at(-1), 4);
 assert.equal(heights("right-approach")[0], 4);
-assert([...regression.samples.values()].flat().every((p) => p[2] >= 0));
+assert([...regression.samples.values()].flat().every((p) => Number.isFinite(p[2])));
 
 const layered = prepareRoads([
   road("layer-deck", [[103.852, 1.29], [103.8521, 1.29]], { layer: 1 }),
@@ -55,4 +57,11 @@ const roads = [
 const index = roadIndex(roads);
 assert.equal(surfaceAt(index, 49.9, 0, roads[0], 0).id, "ground");
 assert.equal(surfaceAt(index, 50.1, 0, roads[1], 4).id, "bridge");
+
+const tunnelRoads = [
+  { id: "portal", featureId: "portal", connections: ["tunnel"], a: [0, 0, 0], b: [50, 0, -4], width: 10 },
+  { id: "tunnel", featureId: "tunnel", connections: ["portal"], a: [50, 0, -4], b: [100, 0, -4], width: 10 },
+];
+const tunnelIndex = roadIndex(tunnelRoads);
+assert.equal(surfaceAt(tunnelIndex, 50.7, 0, tunnelRoads[0], -4).id, "tunnel");
 console.log("road preparation and surface contact checks passed");
