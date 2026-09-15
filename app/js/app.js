@@ -48,9 +48,7 @@ let roads = [],
   lastHud = 0,
   distance = 0,
   spawnPickerReady = false,
-  spawnZoom,
-  trafficGroup = null,
-  trafficKey = "";
+  spawnZoom;
 let state = { x: 0, z: 0, yaw: 0, speed: 0, steer: 0 },
   clock = new THREE.Clock(),
   smoothGround = 0,
@@ -192,18 +190,19 @@ function createChunk(data) {
       for (const raw of ringsOf(f)) {
         const rings = raw.map((r) => r.map(point));
         if (rings[0].length < 4) continue;
-        const g = new THREE.ExtrudeGeometry(polygonShape(rings), {
-          depth: Math.max(1, height - base),
-          bevelEnabled: false,
-          steps: 1,
-          curveSegments: 1,
-        });
-        g.rotateX(-Math.PI / 2);
-        g.translate(0, base, 0);
-        const palette = ["#bac8c5", "#9badae", "#d3d7c9", "#a6b8b6", "#bac4b5"];
         const hash = String(f.id || height)
-          .split("")
-          .reduce((a, c) => a + c.charCodeAt(0), 0);
+            .split("")
+            .reduce((a, c) => a + c.charCodeAt(0), 0),
+          renderBase = base + (hash % 23) * 0.006,
+          g = new THREE.ExtrudeGeometry(polygonShape(rings), {
+            depth: Math.max(1, height - base),
+            bevelEnabled: false,
+            steps: 1,
+            curveSegments: 1,
+          });
+        g.rotateX(-Math.PI / 2);
+        g.translate(0, renderBase, 0);
+        const palette = ["#bac8c5", "#9badae", "#d3d7c9", "#a6b8b6", "#bac4b5"];
         buildingGeo.push(colourGeometry(g, palette[hash % palette.length]));
         blocks.push({
           rings,
@@ -263,111 +262,6 @@ function rebuildCollisionLists() {
     }
   }
   updateMinimapRoads();
-  updateTrafficLights();
-}
-function intersection(a, b, c, d) {
-  const den = (b[0] - a[0]) * (d[1] - c[1]) - (b[1] - a[1]) * (d[0] - c[0]);
-  if (Math.abs(den) < 0.001) return null;
-  const t =
-      ((c[0] - a[0]) * (d[1] - c[1]) - (c[1] - a[1]) * (d[0] - c[0])) / den,
-    u = ((c[0] - a[0]) * (b[1] - a[1]) - (c[1] - a[1]) * (b[0] - a[0])) / den;
-  if (t < -0.02 || t > 1.02 || u < -0.02 || u > 1.02) return null;
-  return [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])];
-}
-function updateTrafficLights() {
-  const key = [...chunkState.keys()].sort().join("|");
-  if (key === trafficKey) return;
-  trafficKey = key;
-  if (trafficGroup) disposeGroup(trafficGroup);
-  if (!roads.length) return;
-  const size = 120,
-    cells = new Map(),
-    hits = [];
-  for (let i = 0; i < roads.length; i++) {
-    const r = roads[i];
-    if (r.width < 10) continue;
-    const minX = Math.floor(Math.min(r.a[0], r.b[0]) / size),
-      maxX = Math.floor(Math.max(r.a[0], r.b[0]) / size),
-      minZ = Math.floor(Math.min(r.a[1], r.b[1]) / size),
-      maxZ = Math.floor(Math.max(r.a[1], r.b[1]) / size);
-    for (let x = minX; x <= maxX; x++)
-      for (let z = minZ; z <= maxZ; z++) {
-        const cell = cells.get(`${x},${z}`) || [];
-        for (const j of cell) {
-          const q = roads[j];
-          if (q.source === r.source || q.width < 10) continue;
-          const p = intersection(r.a, r.b, q.a, q.b);
-          if (!p || hits.some((h) => Math.hypot(h[0] - p[0], h[1] - p[1]) < 18))
-            continue;
-          hits.push(p);
-          if (hits.length >= 120) break;
-        }
-        cell.push(i);
-        cells.set(`${x},${z}`, cell);
-        if (hits.length >= 120) break;
-      }
-    if (hits.length >= 120) break;
-  }
-  const group = new THREE.Group(),
-    poleGeo = new THREE.CylinderGeometry(0.08, 0.11, 4.4, 6),
-    headGeo = new THREE.BoxGeometry(0.24, 0.58, 0.18),
-    lampGeo = new THREE.SphereGeometry(0.065, 8, 8),
-    poleMat = new THREE.MeshStandardMaterial({
-      color: "#26363b",
-      roughness: 0.8,
-    }),
-    headMat = new THREE.MeshStandardMaterial({
-      color: "#101b20",
-      roughness: 0.7,
-    }),
-    redMat = new THREE.MeshStandardMaterial({
-      color: "#ff413d",
-      emissive: "#e11d18",
-      emissiveIntensity: 1.8,
-    }),
-    amberMat = new THREE.MeshStandardMaterial({
-      color: "#e4ae3d",
-      emissive: "#b26c15",
-      emissiveIntensity: 0.25,
-    }),
-    greenMat = new THREE.MeshStandardMaterial({
-      color: "#4dce7e",
-      emissive: "#1e8f51",
-      emissiveIntensity: 0.2,
-    });
-  for (const p of hits) {
-    const r = getNearestRoad(p[0], p[1]);
-    if (!r) continue;
-    const len = Math.hypot(r.b[0] - r.a[0], r.b[1] - r.a[1]),
-      nx = -(r.b[1] - r.a[1]) / len,
-      nz = (r.b[0] - r.a[0]) / len,
-      offset = r.width / 2 + 1.5;
-    for (const side of [-1, 1]) {
-      const x = p[0] + nx * offset * side,
-        z = p[1] + nz * offset * side,
-        pole = new THREE.Mesh(poleGeo, poleMat),
-        head = new THREE.Mesh(headGeo, headMat);
-      pole.position.set(x, 2.2, z);
-      head.position.set(x, 4.05, z);
-      head.rotation.y = Math.atan2(r.b[0] - r.a[0], r.b[1] - r.a[1]);
-      group.add(pole, head);
-      for (const [y, mat] of [
-        [4.22, redMat],
-        [4.05, amberMat],
-        [3.88, greenMat],
-      ]) {
-        const lamp = new THREE.Mesh(lampGeo, mat);
-        lamp.position.set(
-          x + 0.13 * Math.sin(head.rotation.y),
-          y,
-          z + 0.13 * Math.cos(head.rotation.y),
-        );
-        group.add(lamp);
-      }
-    }
-  }
-  trafficGroup = group;
-  scene.add(group);
 }
 function updateMinimapRoads() {
   const d = roads
@@ -987,6 +881,7 @@ async function init() {
       canvas,
       antialias: true,
       powerPreference: "high-performance",
+      logarithmicDepthBuffer: true,
     });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.6));
     renderer.shadowMap.enabled = false;
