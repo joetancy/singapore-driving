@@ -987,7 +987,6 @@ async function init() {
       canvas,
       antialias: true,
       powerPreference: "high-performance",
-      logarithmicDepthBuffer: true,
     });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.6));
     renderer.shadowMap.enabled = false;
