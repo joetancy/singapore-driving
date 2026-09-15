@@ -53,8 +53,7 @@ let state = { x: 0, z: 0, yaw: 0, speed: 0, steer: 0 },
   clock = new THREE.Clock(),
   smoothGround = 0,
   nearRoad = null,
-  frame = 0,
-  driving = false;
+  frame = 0;
 const lookTarget = new THREE.Vector3(),
   cameraTarget = new THREE.Vector3(),
   sunTarget = new THREE.Object3D();
@@ -678,7 +677,6 @@ function resetCar(announce = true) {
 }
 function setPaused(value) {
   paused = value;
-  setDriving(false);
   keys.clear();
   touches.clear();
   document
@@ -692,10 +690,13 @@ function setPaused(value) {
   if (ready)
     toast(paused ? "Paused — press Esc to resume" : "Back to the road");
 }
-function setDriving(value) {
-  if (driving === value) return;
-  driving = value;
-  document.documentElement.classList.toggle("driving", driving);
+function setHudHidden(value) {
+  document.documentElement.classList.toggle("hud-hidden", value);
+  $("hud-toggle").textContent = value ? "👁️" : "🙈";
+  $("hud-toggle").setAttribute(
+    "aria-label",
+    value ? "Show driving interface" : "Hide driving interface",
+  );
 }
 function bindControls() {
   const valid = [
@@ -762,6 +763,8 @@ function bindControls() {
   $("spawn-picker").onclick = openSpawnPicker;
   $("minimap").onclick = openSpawnPicker;
   $("night-toggle").onclick = () => setNight(!night);
+  $("hud-toggle").onclick = () =>
+    setHudHidden(!document.documentElement.classList.contains("hud-hidden"));
   $("close-spawn").onclick = () => $("spawn-dialog").close();
   $("spawn-dialog").addEventListener("close", () =>
     setPaused(wasPausedBeforePicker),
@@ -855,7 +858,6 @@ function animate() {
       distance += Math.hypot(state.x - oldX, state.z - oldZ) / 1000;
     }
   }
-  setDriving(!paused && Math.abs(state.speed) > 0.5);
   const ground =
     nearRoad && nearRoad.d < nearRoad.width / 2 + 2 ? nearRoad.y : 0;
   smoothGround += (ground - smoothGround) * (1 - Math.exp(-6 * dt));

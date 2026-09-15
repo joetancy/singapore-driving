@@ -52,26 +52,24 @@ canvas:focus-visible {
     opacity 0.25s ease,
     transform 0.25s ease;
 }
-.driving .topbar,
-.driving .location,
-.driving .compass,
-.driving .map-panel,
-.driving .keyboard-hint,
-.driving .credits {
+.hud-hidden .location,
+.hud-hidden .compass,
+.hud-hidden .dashboard,
+.hud-hidden .keyboard-hint,
+.hud-hidden .credits {
   opacity: 0;
   pointer-events: none;
 }
-.driving .topbar,
-.driving .location,
-.driving .compass {
+.hud-hidden .location,
+.hud-hidden .compass {
   transform: translateY(-18px);
 }
-.driving .map-panel {
-  transform: translateX(18px);
-}
-.driving .keyboard-hint,
-.driving .credits {
+.hud-hidden .keyboard-hint,
+.hud-hidden .credits {
   transform: translateY(18px);
+}
+.hud-hidden .dashboard {
+  transform: translateX(-18px);
 }
 .topbar {
   position: absolute;
