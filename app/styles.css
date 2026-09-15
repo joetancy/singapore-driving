@@ -802,10 +802,16 @@ dd {
 .spawn-map-wrap #spawn-map .road {
   fill: none;
   stroke: #9bb1b3;
-  stroke-width: 18;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+.spawn-map-wrap #spawn-map .overview { stroke: #78979f; }
+.spawn-map-wrap #spawn-map .detail { stroke: #bed8d6; }
+.spawn-map-wrap .spawn-marker { fill: var(--mint); pointer-events: none; }
+.spawn-choices { display: grid; gap: 6px; }
+.spawn-choices button { padding: 10px; background: #254753; color: white; border: 1px solid #78979f; border-radius: 6px; }
 .spawn-map-wrap #spawn-marker {
   fill: var(--mint);
   stroke: #17352e;
@@ -832,14 +838,6 @@ dd {
 .spawn-zoom button:hover {
   background: #bafa9c;
   color: #17352e;
-}
-.spawn-map-wrap #spawn-map #spawn-overview {
-  stroke: #66868d;
-  stroke-width: 13;
-}
-.spawn-map-wrap #spawn-map #spawn-roads {
-  stroke: #b8d6d0;
-  stroke-width: 20;
 }
 .night .topbar {
   background: linear-gradient(#020813aa, transparent);

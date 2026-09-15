@@ -1,13 +1,15 @@
 import * as THREE from "../../public/vendor/three.module.js";
 import {
   colourGeometry,
-  elevation,
+  ribbon,
+  deck,
   mergeInto,
   polygonShape,
-  quad,
   ringsOf,
 } from "./geometry.js";
 import { loadPreferences, saveNight, saveSpawn } from "./storage.js";
+import { roadIndex, surfaceAt, sampleHeight } from "./roads.js";
+import { createSpawnPicker } from "./spawn-map.js";
 import {
   clamp,
   nearestPoint,
@@ -46,9 +48,7 @@ let roads = [],
   chunkState = new Map(),
   lastStream = 0,
   lastHud = 0,
-  distance = 0,
-  spawnPickerReady = false,
-  spawnZoom;
+  distance = 0;
 let state = { x: 0, z: 0, yaw: 0, speed: 0, steer: 0 },
   clock = new THREE.Clock(),
   smoothGround = 0,
@@ -59,6 +59,7 @@ const lookTarget = new THREE.Vector3(),
   sunTarget = new THREE.Object3D();
 const worldMaterials = {},
   buildingNightUniform = { value: 0 };
+let surfaces = roadIndex([]), activeRoad = null, spawnSelection = null;
 function toast(text) {
   $("toast").textContent = text;
   $("toast").classList.add("show");
@@ -94,42 +95,6 @@ async function json(url) {
 function point(p) {
   return projection(p);
 }
-function bridgeDeck(a, b, width, top) {
-  const dx = b[0] - a[0],
-    dz = b[1] - a[1],
-    length = Math.hypot(dx, dz),
-    geometry = new THREE.BoxGeometry(width, 0.7, length);
-  geometry.rotateY(Math.atan2(dx, dz));
-  geometry.translate((a[0] + b[0]) / 2, top - 0.35, (a[1] + b[1]) / 2);
-  return geometry;
-}
-function bridgeRail(a, b, width, top, side) {
-  const dx = b[0] - a[0],
-    dz = b[1] - a[1],
-    length = Math.hypot(dx, dz),
-    offset = width / 2 - 0.3,
-    geometry = new THREE.BoxGeometry(0.16, 0.8, length);
-  geometry.rotateY(Math.atan2(dx, dz));
-  geometry.translate(
-    (a[0] + b[0]) / 2 - (dz / length) * offset * side,
-    top + 0.4,
-    (a[1] + b[1]) / 2 + (dx / length) * offset * side,
-  );
-  return geometry;
-}
-function bridgePiers(a, b, top) {
-  const dx = b[0] - a[0],
-    dz = b[1] - a[1],
-    length = Math.hypot(dx, dz),
-    height = Math.max(1, top - 0.7),
-    piers = [];
-  for (let t = 20; t < length; t += 40) {
-    const geometry = new THREE.BoxGeometry(1.3, height, 1.3);
-    geometry.translate(a[0] + (dx * t) / length, height / 2, a[1] + (dz * t) / length);
-    piers.push(geometry);
-  }
-  return piers;
-}
 function createChunk(data) {
   const group = new THREE.Group(),
     buildingGeo = [],
@@ -156,84 +121,43 @@ function createChunk(data) {
       f.geometry.type === "LineString" ||
       f.geometry.type === "MultiLineString"
     ) {
-      const lines =
-        f.geometry.type === "LineString"
-          ? [f.geometry.coordinates]
-          : f.geometry.coordinates;
-      const width = clamp(
-          parseFloat(props.width) ||
-            {
-              motorway: 18,
-              trunk: 18,
-              primary: 16,
-              secondary: 14,
-              tertiary: 11,
-              residential: 9,
-              service: 6,
-            }[props.highway] ||
-            10,
-          4,
-          32,
-        ),
-        y = elevation(props),
-        roadY =
-          y +
-          0.065 +
-          (String(f.id)
-            .split("")
-            .reduce((n, c) => n + c.charCodeAt(0), 0) %
-            17) *
-            0.004;
-      for (const line of lines) {
-        const pts = line.map(point);
-        for (let i = 0; i < pts.length - 1; i++) {
-          const a = pts[i],
-            b = pts[i + 1],
-            len = Math.hypot(b[0] - a[0], b[1] - a[1]);
-          if (len < 0.01) continue;
-          const segment = {
-            a,
-            b,
-            width,
-            y,
-            name: props.name || "Local road",
-            oneway: props.oneway,
-            source: f.id,
-          };
-          segments.push(segment);
-          if (y > 0) {
-            const deckWidth = width + 4,
-              deckTop = y + 0.01;
-            bridgeGeo.push(
-              bridgeDeck(a, b, deckWidth, deckTop),
-              bridgeRail(a, b, deckWidth, deckTop, -1),
-              bridgeRail(a, b, deckWidth, deckTop, 1),
-              ...bridgePiers(a, b, deckTop),
-            );
-          }
-          pavementGeo.push(quad(a, b, width + 4, y + 0.025, "#b4bdb8"));
-          roadGeo.push(quad(a, b, width, roadY, "#48575b"));
-          const dx = (b[0] - a[0]) / len,
-            dz = (b[1] - a[1]) / len;
-          for (let t = 0; t < len; t += 13) {
-            const end = Math.min(t + 5, len);
-            markGeo.push(
-              quad(
-                [a[0] + dx * t, a[1] + dz * t],
-                [a[0] + dx * end, a[1] + dz * end],
-                0.16,
-                roadY + 0.02,
-                "#e7e8d6",
-              ),
-            );
-          }
-          for (const side of [-1, 1]) {
-            const off = side * (width / 2 - 0.65),
-              aa = [a[0] - dz * off, a[1] + dx * off],
-              bb = [b[0] - dz * off, b[1] + dx * off];
-            markGeo.push(quad(aa, bb, 0.12, roadY + 0.019, "#d3c990"));
+      const width = clamp(parseFloat(props.width) ||
+        ({ motorway: 18, trunk: 18, primary: 16, secondary: 14, tertiary: 11,
+          residential: 9, service: 6 }[props.highway] || 10), 4, 32);
+      const pts = props.samples;
+      if (!pts?.length) throw new Error("Road assets require npm run build");
+      for (let i = 0; i < pts.length - 1; i++) {
+        const a = pts[i], b = pts[i + 1], len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        if (len < 0.01) continue;
+        const segment = { a, b, width, y: a[2], id: f.id + ":" + i,
+          name: props.name || "Local road", oneway: props.oneway,
+          source: props.sourceId || String(f.id).replace(/-\d+-\d+$/, ""), featureId: f.id,
+          connections: [...(props.connections?.start || []), ...(props.connections?.end || [])],
+          highway: props.highway };
+        segments.push(segment);
+        const elevated = Math.max(a[2], b[2]) > 0.3;
+        if (elevated) {
+          bridgeGeo.push(deck(a, b, width + 4));
+          for (const side of [-1, 1])
+            bridgeGeo.push(deck(a, b, 0.16, 0.01, 0.81, side * (width / 2 + 1.7)));
+          if (Math.floor(a[3] / 40) !== Math.floor(b[3] / 40)) {
+            const h = Math.max(0.1, (a[2] + b[2]) / 2 - 0.7);
+            const pier = new THREE.BoxGeometry(1.3, h, 1.3);
+            pier.translate((a[0] + b[0]) / 2, h / 2, (a[1] + b[1]) / 2);
+            bridgeGeo.push(pier);
           }
         }
+        pavementGeo.push(ribbon(a, b, width + 4, 0.025, "#b4bdb8"));
+        roadGeo.push(ribbon(a, b, width, 0.065, "#48575b"));
+        const interpolate = (t) => a.map((v, j) => v + (b[j] - v) * t);
+        for (let d = Math.floor(a[3] / 13) * 13; d < b[3]; d += 13) {
+          const lo = Math.max(d, a[3]), hi = Math.min(d + 5, b[3]);
+          if (hi > lo) markGeo.push(ribbon(
+            interpolate((lo - a[3]) / (b[3] - a[3])),
+            interpolate((hi - a[3]) / (b[3] - a[3])), 0.16, 0.09, "#e7e8d6"));
+        }
+        for (const side of [-1, 1])
+          markGeo.push(ribbon(a, b, 0.12, 0.09, "#d3c990", side * (width / 2 - 0.65)));
       }
     } else {
       const height = clamp(
@@ -325,19 +249,21 @@ function rebuildCollisionLists() {
     }
   }
   updateMinimapRoads();
+  surfaces = roadIndex(roads);
 }
 function updateMinimapRoads() {
   const d = roads
     .map((r) => `M${r.a[0]},${r.a[1]}L${r.b[0]},${r.b[1]}`)
     .join("");
-  for (const id of ["map-roads", "spawn-roads"]) {
+  for (const id of ["map-roads"]) {
     const map = $(id);
     if (map) map.setAttribute("d", d);
   }
 }
 async function streamChunks(force = false) {
-  const loadRadius = innerWidth < 768 ? 900 : 1400,
-    unloadRadius = loadRadius + 400,
+  let changed = false;
+  const loadRadius = innerWidth < 768 ? 500 : 650,
+    unloadRadius = loadRadius + 250,
     distanceTo = (c) => {
       const a = point([c.bbox[0], c.bbox[1]]),
         b = point([c.bbox[2], c.bbox[3]]),
@@ -359,6 +285,7 @@ async function streamChunks(force = false) {
     if (chunk && distanceTo(chunk) > unloadRadius && c.group) {
       disposeGroup(c.group);
       chunkState.delete(id);
+      changed = true;
     }
   }
   const requests = wanted.map(async (c) => {
@@ -369,6 +296,7 @@ async function streamChunks(force = false) {
       const group = createChunk(data);
       scene.add(group);
       chunkState.set(c.id, { group });
+      changed = true;
     } catch (e) {
       chunkState.delete(c.id);
       if (force) throw e;
@@ -377,7 +305,7 @@ async function streamChunks(force = false) {
     }
   });
   await Promise.all(requests);
-  rebuildCollisionLists();
+  if (changed) rebuildCollisionLists();
 }
 function box(w, h, d, material, x = 0, y = 0, z = 0) {
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
@@ -571,87 +499,44 @@ function setupMinimap() {
     .attr("stroke", "#a4c0ca")
     .attr("stroke-width", 1);
 }
-function setupSpawnPicker() {
-  if (spawnPickerReady) return;
-  const svg = d3.select("#spawn-map"),
-    layer = svg.append("g").attr("id", "spawn-layer"),
-    path = d3.geoPath(projection),
-    overview = {
-      type: "FeatureCollection",
-      features: roadFeatures.filter(
-        (f) => !f.properties.highway.endsWith("_link"),
-      ),
-    };
-  layer
-    .append("path")
-    .datum(overview)
-    .attr("id", "spawn-overview")
-    .attr("class", "road")
-    .attr("d", path);
-  layer.append("path").attr("id", "spawn-roads").attr("class", "road");
-  layer.append("circle").attr("id", "spawn-marker").attr("r", 95);
-  updateMinimapRoads();
-  spawnZoom = d3
-    .zoom()
-    .scaleExtent([0.08, 3])
-    .on("zoom", (event) => layer.attr("transform", event.transform));
-  svg.call(spawnZoom).on("click", async (event) => {
-    if (event.defaultPrevented) return;
-    const [px, pz] = d3.pointer(event, svg.node()),
-      [x, z] = d3.zoomTransform(svg.node()).invert([px, pz]),
-      before = { ...state };
-    d3.select("#spawn-marker").attr("cx", x).attr("cy", z);
-    state.x = x;
-    state.z = z;
-    try {
-      await streamChunks(true);
-      const road = getNearestRoad(x, z);
-      if (!road || road.d > 400) throw new Error("No nearby road");
-      manifest.spawn = projection.invert([road.x, road.z]);
-      manifest.spawnTarget = projection.invert(road.b);
-      saveSpawn(manifest.spawn, manifest.spawnTarget);
-      resetCar(false);
-      $("spawn-dialog").close();
-      toast("New starting road");
-    } catch (error) {
-      state = before;
-      streamChunks().catch(console.error);
-      toast("Choose closer to a road");
-    }
-  });
-  $("spawn-zoom-in").onclick = () => svg.call(spawnZoom.scaleBy, 1.8);
-  $("spawn-zoom-out").onclick = () => svg.call(spawnZoom.scaleBy, 0.55);
-  $("spawn-zoom-reset").onclick = () =>
-    svg.call(
-      spawnZoom.transform,
-      d3.zoomIdentity
-        .translate(130, 110)
-        .scale(0.19)
-        .translate(-state.x, -state.z),
-    );
-  spawnPickerReady = true;
-}
+let showSpawnMap;
 function openSpawnPicker() {
   if (!ready) return;
   wasPausedBeforePicker = paused;
   setPaused(true);
-  setupSpawnPicker();
-  d3.select("#spawn-map").call(
-    spawnZoom.transform,
-    d3.zoomIdentity
-      .translate(130, 110)
-      .scale(0.19)
-      .translate(-state.x, -state.z),
-  );
-  d3.select("#spawn-marker").attr("cx", state.x).attr("cy", state.z);
+  if (!showSpawnMap) showSpawnMap = createSpawnPicker({
+    manifest, project: point, fetchJSON: json,
+    onSelect: async (hit) => {
+      const before = { ...state }, previousSelection = spawnSelection;
+      state.x = hit.x; state.z = hit.z;
+      try {
+        await streamChunks(true);
+        const selection = { roadId: hit.id, progress: hit.a[3] + (hit.b[3] - hit.a[3]) * hit.t };
+        spawnSelection = selection;
+        const candidate = getNearestRoad(hit.x, hit.z);
+        if (!candidate) throw new Error("Selected road is unavailable");
+        manifest.spawn = projection.invert([candidate.x, candidate.z]);
+        manifest.spawnTarget = projection.invert(candidate.b);
+        saveSpawn(manifest.spawn, manifest.spawnTarget, selection);
+        resetCar(false);
+        $("spawn-dialog").close();
+        toast("Starting road saved");
+      } catch (e) {
+        state = before; spawnSelection = previousSelection;
+        await streamChunks();
+        throw e;
+      }
+    },
+  });
   $("spawn-dialog").showModal();
-  toast("Drag or scroll, then click a road");
+  showSpawnMap([state.x, state.z]);
 }
 function getNearestRoad(x, z) {
   let best = null;
   for (const road of roads) {
     const p = nearestPoint(x, z, road.a, road.b);
-    if (!best || p.d < best.d) best = { ...road, ...p };
+    if (spawnSelection && road.featureId !== spawnSelection.roadId) continue;
+    if (!best || p.d < best.d) best = { ...road, ...p, y: sampleHeight(road, p.t) };
   }
   return best;
 }
@@ -689,7 +574,11 @@ function resetCar(announce = true) {
     speed: 0,
     steer: 0,
   };
-  const nearest = getNearestRoad(state.x, state.z);
+  let nearest = getNearestRoad(state.x, state.z);
+  if (!nearest && spawnSelection) {
+    spawnSelection = null;
+    nearest = getNearestRoad(state.x, state.z);
+  }
   if (nearest) {
     const dx = nearest.b[0] - nearest.a[0],
       dz = nearest.b[1] - nearest.a[1],
@@ -699,6 +588,10 @@ function resetCar(announce = true) {
     state.x = nearest.x + (dz / l) * nearest.width * 0.24 * dir;
     state.z = nearest.z - (dx / l) * nearest.width * 0.24 * dir;
     smoothGround = nearest.y;
+    activeRoad = nearest;
+    nearRoad = nearest;
+    spawnSelection = { roadId: nearest.featureId, progress: nearest.a[3] + (nearest.b[3] - nearest.a[3]) * nearest.t };
+    saveSpawn(manifest.spawn, manifest.spawnTarget, spawnSelection);
   }
   car.position.set(state.x, smoothGround + 0.1, state.z);
   car.rotation.y = -state.yaw;
@@ -847,7 +740,7 @@ function animate() {
   frame++;
   if (!ready) return;
   const now = performance.now();
-  nearRoad = getNearestRoad(state.x, state.z);
+  nearRoad = surfaceAt(surfaces, state.x, state.z, activeRoad, smoothGround);
   if (!paused) {
     const down = (...codes) =>
       codes.some((c) => keys.has(c) || [...touches.values()].includes(c));
@@ -858,12 +751,14 @@ function animate() {
       right: down("KeyD", "ArrowRight"),
       handbrake: down("Space"),
     };
-    const onRoad = nearRoad && nearRoad.d < nearRoad.width / 2 + 1;
     const steps = Math.max(1, Math.ceil(dt / 0.012));
     for (let i = 0; i < steps; i++) {
       const oldX = state.x,
         oldZ = state.z;
-      stepCar(state, input, dt / steps, onRoad);
+      const before = surfaceAt(surfaces, oldX, oldZ, activeRoad, smoothGround);
+      stepCar(state, input, dt / steps, !!before);
+      const contact = surfaceAt(surfaces, state.x, state.z, activeRoad, smoothGround);
+      const edge = !contact && smoothGround > 0.3;
       const ll = projection.invert([state.x, state.z]),
         bb = manifest.bounds;
       const outside =
@@ -874,31 +769,38 @@ function animate() {
         (boundaryPolygons.length &&
           !boundaryPolygons.some((r) => inPolygon(state.x, state.z, r)));
       const water =
-        (!onRoad || nearRoad.y < 0.1) &&
+        (!contact || contact.y < 0.1) &&
         waterPolygons.some((r) => inPolygon(state.x, state.z, r));
-      if (outside || water || blocked(state.x, state.z, smoothGround)) {
+      if (edge || outside || water || blocked(state.x, state.z, contact?.y ?? smoothGround)) {
         state.x = oldX;
         state.z = oldZ;
         state.speed = 0;
         if (now - lastHud > 2000) {
           lastHud = now;
           toast(
-            outside
+            edge ? "Road edge — follow the deck or wait for the next section" : outside
               ? "Edge of the available map"
               : water
                 ? "Stay on land — reverse to return"
                 : "Building ahead — reverse to return",
           );
         }
+      } else {
+        nearRoad = contact;
+        activeRoad = contact;
+        smoothGround = contact?.y ?? 0;
       }
       distance += Math.hypot(state.x - oldX, state.z - oldZ) / 1000;
     }
   }
-  const ground =
-    nearRoad && nearRoad.d < nearRoad.width / 2 + 2 ? nearRoad.y : 0;
-  smoothGround += (ground - smoothGround) * (1 - Math.exp(-6 * dt));
   car.position.set(state.x, smoothGround + 0.08, state.z);
   car.rotation.y = -state.yaw;
+  const slope = activeRoad ? (activeRoad.b[2] - activeRoad.a[2]) /
+    Math.hypot(activeRoad.b[0] - activeRoad.a[0], activeRoad.b[1] - activeRoad.a[1]) : 0;
+  const alignment = activeRoad ? (Math.sin(state.yaw) * (activeRoad.b[0] - activeRoad.a[0]) -
+    Math.cos(state.yaw) * (activeRoad.b[1] - activeRoad.a[1])) /
+    Math.hypot(activeRoad.b[0] - activeRoad.a[0], activeRoad.b[1] - activeRoad.a[1]) : 0;
+  car.rotation.x = Math.atan(slope * alignment);
   for (const wheel of allWheels) wheel.rotation.x -= (state.speed * dt) / 0.4;
   for (const wheel of frontWheels) wheel.rotation.y = -state.steer * 0.4;
   if (firstPerson) {
@@ -972,6 +874,7 @@ async function init() {
     ground.receiveShadow = true;
     scene.add(ground);
     worldMaterials.road = new THREE.MeshStandardMaterial({
+      polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
       vertexColors: true,
       roughness: 1,
       side: THREE.DoubleSide,
@@ -986,6 +889,7 @@ async function init() {
       roughness: 0.9,
     });
     worldMaterials.mark = new THREE.MeshBasicMaterial({
+      polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
       vertexColors: true,
       side: THREE.DoubleSide,
     });
@@ -1030,6 +934,7 @@ async function init() {
     if (preferences.spawn) {
       manifest.spawn = preferences.spawn.spawn;
       manifest.spawnTarget = preferences.spawn.spawnTarget;
+      spawnSelection = preferences.spawn.roadId ? preferences.spawn : null;
     }
     night = preferences.night;
     projection = d3

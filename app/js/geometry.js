@@ -79,3 +79,26 @@ export function quad(a, b, width, y, color) {
   geometry.computeVertexNormals();
   return colourGeometry(geometry, color);
 }
+
+// A shared cross section at each sample keeps neighbouring ribbons watertight.
+export function ribbon(a, b, width, offset, color, lateral = 0) {
+  const edge = (p, side) => [p[0] + p[4] * (lateral + side * width / 2),
+    p[2] + offset, p[1] + p[5] * (lateral + side * width / 2)];
+  const al = edge(a, 1), ar = edge(a, -1), bl = edge(b, 1), br = edge(b, -1);
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute([...al, ...bl, ...ar, ...bl, ...br, ...ar], 3));
+  geometry.computeVertexNormals();
+  return colourGeometry(geometry, color);
+}
+
+export function deck(a, b, width, bottom = -0.7, top = 0.01, lateral = 0) {
+  const vertices = [];
+  for (const p of [a, b]) for (const y of [bottom, top]) for (const side of [-1, 1])
+    vertices.push(p[0] + p[4] * (lateral + side * width / 2), p[2] + y,
+      p[1] + p[5] * (lateral + side * width / 2));
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(vertices, 3));
+  geometry.setIndex([0,1,2,1,3,2,4,6,5,5,6,7,0,4,1,1,4,5,2,3,6,3,7,6,0,2,4,2,6,4,1,5,3,3,5,7]);
+  geometry.computeVertexNormals();
+  return geometry;
+}

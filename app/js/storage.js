@@ -16,9 +16,9 @@ export function loadPreferences() {
   }
 }
 
-export function saveSpawn(spawn, spawnTarget) {
+export function saveSpawn(spawn, spawnTarget, selection = {}) {
   try {
-    localStorage.setItem(SPAWN_KEY, JSON.stringify({ spawn, spawnTarget }));
+    localStorage.setItem(SPAWN_KEY, JSON.stringify({ spawn, spawnTarget, ...selection }));
   } catch {}
 }
 
