@@ -103,6 +103,33 @@ function bridgeDeck(a, b, width, top) {
   geometry.translate((a[0] + b[0]) / 2, top - 0.35, (a[1] + b[1]) / 2);
   return geometry;
 }
+function bridgeRail(a, b, width, top, side) {
+  const dx = b[0] - a[0],
+    dz = b[1] - a[1],
+    length = Math.hypot(dx, dz),
+    offset = width / 2 - 0.3,
+    geometry = new THREE.BoxGeometry(0.16, 0.8, length);
+  geometry.rotateY(Math.atan2(dx, dz));
+  geometry.translate(
+    (a[0] + b[0]) / 2 - (dz / length) * offset * side,
+    top + 0.4,
+    (a[1] + b[1]) / 2 + (dx / length) * offset * side,
+  );
+  return geometry;
+}
+function bridgePiers(a, b, top) {
+  const dx = b[0] - a[0],
+    dz = b[1] - a[1],
+    length = Math.hypot(dx, dz),
+    height = Math.max(1, top - 0.7),
+    piers = [];
+  for (let t = 20; t < length; t += 40) {
+    const geometry = new THREE.BoxGeometry(1.3, height, 1.3);
+    geometry.translate(a[0] + (dx * t) / length, height / 2, a[1] + (dz * t) / length);
+    piers.push(geometry);
+  }
+  return piers;
+}
 function createChunk(data) {
   const group = new THREE.Group(),
     buildingGeo = [],
@@ -174,7 +201,16 @@ function createChunk(data) {
             source: f.id,
           };
           segments.push(segment);
-          if (y > 0) bridgeGeo.push(bridgeDeck(a, b, width + 4, y + 0.01));
+          if (y > 0) {
+            const deckWidth = width + 4,
+              deckTop = y + 0.01;
+            bridgeGeo.push(
+              bridgeDeck(a, b, deckWidth, deckTop),
+              bridgeRail(a, b, deckWidth, deckTop, -1),
+              bridgeRail(a, b, deckWidth, deckTop, 1),
+              ...bridgePiers(a, b, deckTop),
+            );
+          }
           pavementGeo.push(quad(a, b, width + 4, y + 0.025, "#b4bdb8"));
           roadGeo.push(quad(a, b, width, roadY, "#48575b"));
           const dx = (b[0] - a[0]) / len,
