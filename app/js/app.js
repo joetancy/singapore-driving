@@ -262,8 +262,8 @@ function updateMinimapRoads() {
 }
 async function streamChunks(force = false) {
   let changed = false;
-  const loadRadius = innerWidth < 768 ? 500 : 650,
-    unloadRadius = loadRadius + 250,
+  const loadRadius = innerWidth < 768 ? 900 : 1400,
+    unloadRadius = loadRadius + 400,
     distanceTo = (c) => {
       const a = point([c.bbox[0], c.bbox[1]]),
         b = point([c.bbox[2], c.bbox[3]]),
