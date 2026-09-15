@@ -1,6 +1,6 @@
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { prepareRoads } from "./road-network.mjs";
+import { prepareRoads, roadVisible } from "./road-network.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const output = resolve(root, "dist");
@@ -23,7 +23,10 @@ for (const c of chunks) {
   const map = [];
   for (const f of c.data.features) {
     if (!prepared.samples.has(f.id)) continue;
-    f.properties.samples = prepared.samples.get(f.id).map((p) => p.map((v, i) => Number(v.toFixed(i >= 4 ? 6 : 3))));
+    f.properties.roadVisible = roadVisible(f.properties);
+    if (!f.properties.roadVisible) continue;
+    f.properties.samples = prepared.samples.get(f.id).map((p) => p.map((v, i) => Number(v.toFixed(i === 2 || i >= 4 ? 6 : 3))));
+    if (f.properties.samples.some((p) => p[2] < 0)) throw new Error(`Visible road ${f.id} is below ground`);
     f.properties.connections = prepared.connections.get(f.id);
     f.properties.sourceId = String(f.id).replace(/-\d+-\d+$/, "");
     const road = { id: f.id, name: f.properties.name || "Local road", highway: f.properties.highway,

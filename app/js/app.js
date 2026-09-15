@@ -121,6 +121,7 @@ function createChunk(data) {
       f.geometry.type === "LineString" ||
       f.geometry.type === "MultiLineString"
     ) {
+      if (props.roadVisible === false) continue;
       const width = clamp(parseFloat(props.width) ||
         ({ motorway: 18, trunk: 18, primary: 16, secondary: 14, tertiary: 11,
           residential: 9, service: 6 }[props.highway] || 10), 4, 32);
