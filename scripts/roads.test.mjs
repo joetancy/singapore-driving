@@ -20,7 +20,7 @@ const regression = prepareRoads([
   road("left-approach", [[103.84955, 1.29], junction]),
   road("test-bridge", [junction, bridgeEnd], { bridge: "yes" }),
   road("right-approach", [bridgeEnd, [103.85055, 1.29]]),
-  road("side-road", [bridgeEnd, [103.8501, 1.2902]]),
+  road("side-road", [bridgeEnd, [103.8503, 1.29008]]),
   road("surface-by-tunnel", [[103.851, 1.29], [103.8512, 1.29]]),
   road("tunnel", [[103.8512, 1.29], [103.8514, 1.29]], { tunnel: "yes", layer: -1 }),
 ], center);
