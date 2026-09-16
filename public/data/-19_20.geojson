@@ -1,1 +1,1 @@
-{"type":"FeatureCollection","features":[{"type":"Feature","id":"way/162282063-0-16-0","properties":{"highway":"service","surface":"compacted"},"geometry":{"type":"LineString","coordinates":[[103.766545,1.1895692],[103.7658217,1.189943]]}}]}
+{"type":"FeatureCollection","features":[{"type":"Feature","id":"way/162282063-0-16-0","properties":{"highway":"service","surface":"compacted","startNodeId":"1741953807","endNodeId":"1741953810"},"geometry":{"type":"LineString","coordinates":[[103.766545,1.1895692],[103.7658217,1.189943]]}}]}

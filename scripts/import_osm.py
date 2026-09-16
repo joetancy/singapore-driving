@@ -9,7 +9,9 @@ from pathlib import Path
 from datetime import datetime, timezone
 import xml.etree.ElementTree as ET
 from shapely.geometry import shape, mapping, Polygon, LineString, Point
+from shapely.ops import transform
 from shapely.ops import unary_union, polygonize
+from shapely.strtree import STRtree
 from shapely.validation import make_valid
 
 DRIVABLE={'motorway','motorway_link','trunk','trunk_link','primary','primary_link','secondary','secondary_link','tertiary','tertiary_link','residential','unclassified','living_street','service'}
@@ -40,12 +42,12 @@ def convert(source,boundary_path,output):
  assert boundary.geom_type in {'Polygon','MultiPolygon'},'Singapore boundary must be polygonal'
  assert not boundary.is_empty,'Empty Singapore boundary'
  assert all(103.4<=x<=104.7 and 1.0<=y<=1.7 for p in parts(boundary,{'Polygon'}) for x,y in p.exterior.coords),'Boundary is outside Singapore region'
- elements=read_osm(source);nodes={e['id']:[e['lon'],e['lat']] for e in elements if e['type']=='node'};ways={e['id']:e for e in elements if e['type']=='way'}
+ elements=read_osm(source);node_records={e['id']:e for e in elements if e['type']=='node'};nodes={id:[e['lon'],e['lat']] for id,e in node_records.items()};ways={e['id']:e for e in elements if e['type']=='way'}
  def coords(w):
   if 'geometry' in w:return [[p['lon'],p['lat']] for p in w['geometry'] if p and 'lon' in p]
   refs=w.get('nodes',[])
   return [nodes[n] for n in refs] if all(n in nodes for n in refs) else []
- features=[];roads=[];areas=[];consumed=set();missing=0
+ features=[];roads=[];areas=[];signals=[];crossings=[];consumed=set();missing=0
  def add(geom,props,id,kind):
   geom=make_valid(geom).intersection(boundary)
   for i,g in enumerate(parts(geom,{'LineString'} if kind=='road' else {'Polygon'})):
@@ -79,8 +81,43 @@ def convert(source,boundary_path,output):
    kind=category(t);props=dict(t)
    if kind=='area':props['kind']='water' if t.get('natural')=='water' or t.get('waterway')=='riverbank' else 'park'
    add(Polygon(c),props,f"way/{w['id']}",kind)
- assert roads and features,'Export must contain both driveable roads and buildings with complete geometry'
+ for n in node_records.values():
+  if n['tags'].get('highway')=='traffic_signals' and boundary.covers(Point(n['lon'],n['lat'])):
+   signals.append(dict(type='Feature',id=f"node/{n['id']}",properties=dict(n['tags']),geometry=mapping(Point(n['lon'],n['lat']))))
+  if n['tags'].get('highway')=='crossing' and boundary.covers(Point(n['lon'],n['lat'])):
+   crossings.append(dict(type='Feature',id=f"node/{n['id']}",properties=dict(n['tags']),geometry=mapping(Point(n['lon'],n['lat']))))
  center=[103.851,1.284];cos=math.cos(math.radians(center[1]));chunks={};segments=[]
+ node_at={(round(v[0],7),round(v[1],7)):str(k) for k,v in nodes.items()}
+ assert roads and features,'Export must contain both driveable roads and buildings with complete geometry'
+ # Derive clearance in local metres once, before chunking, so roads at a chunk
+ # edge open the same building footprint from either side.
+ def xy(x,y,z=None):return ((x-center[0])*111320*cos,(y-center[1])*111320)
+ def ll(x,y,z=None):return (x/(111320*cos)+center[0],y/111320+center[1])
+ def road_width(p):
+  fallback={'motorway':18,'trunk':18,'primary':16,'secondary':14,'tertiary':11,'residential':9,'service':6}.get(p.get('highway'),10)
+  try:return max(4,min(32,float(p.get('width',fallback))))
+  except ValueError:return fallback
+ def number(value,default=0):
+  try:return float(value)
+  except (TypeError,ValueError):return default
+ def road_level(p):
+  try:layer=int(float(p.get('layer',0)))
+  except ValueError:layer=0
+  if p.get('tunnel') not in (None,'no') or layer<0:return min(-4,layer*4)
+  return max(4,layer*4) if p.get('bridge') not in (None,'no') else max(0,layer*4)
+ ground=[transform(xy,shape(r['geometry'])).buffer(road_width(r['properties'])/2+1.5,cap_style=2,join_style=2)
+   for r in roads if abs(road_level(r['properties']))<.1]
+ road_tree=STRtree(ground) if ground else None
+ if road_tree:
+  for f in features:
+   p=f['properties'];base=max(0,number(p.get('min_height')))
+   if base<1.7:
+    original=shape(f['geometry']);local=transform(xy,original)
+    nearby=road_tree.query(local)
+    corridor=unary_union([ground[i] for i in nearby])
+    cleared=transform(ll,local.difference(corridor))
+    height=number(p.get('height')) or number(p.get('building:levels',p.get('building_levels')),4)*3.2
+    p['clearanceGeometry']=mapping(cleared);p['clearanceHeight']=min(height,1.7);p['clearancePrepared']=True
  for r in roads:
   points=r['geometry']['coordinates']
   for i,(a,b) in enumerate(zip(points,points[1:])):
@@ -88,8 +125,10 @@ def convert(source,boundary_path,output):
    n=max(1,math.ceil(length/180))
    for j in range(n):
     coords2=[[round(a[k]+(b[k]-a[k])*v/n,7) for k in range(2)] for v in (j,j+1)]
-    segments.append(dict(type='Feature',id=f"{r['id']}-{i}-{j}",properties=r['properties'],geometry=dict(type='LineString',coordinates=coords2)))
- for f in features+segments:
+    ids=[node_at.get(tuple(coords2[0]),f"{r['id']}:{i}:{j}"),node_at.get(tuple(coords2[1]),f"{r['id']}:{i}:{j+1}")]
+    props=dict(r['properties'],startNodeId=ids[0],endNodeId=ids[1])
+    segments.append(dict(type='Feature',id=f"{r['id']}-{i}-{j}",properties=props,geometry=dict(type='LineString',coordinates=coords2)))
+ for f in features+signals+crossings+segments:
   g=shape(f['geometry']);p=g.centroid;x=(p.x-center[0])*111320*cos;z=(center[1]-p.y)*111320
   key=f'{math.floor(x/500)}_{math.floor(z/500)}';chunks.setdefault(key,[]).append(f)
  preferred=[r for r in roads if r['properties'].get('name')=='Bayfront Avenue' and not r['properties'].get('tunnel')]
@@ -108,8 +147,8 @@ def convert(source,boundary_path,output):
  area_overview=[dict(type='Feature',id=a['id'],properties={'kind':a['properties']['kind']},geometry=mapping(shape(a['geometry']).simplify(.00001,preserve_topology=True))) for a in areas]
  write(output/'roads.geojson',fc(overview));write(output/'areas.geojson',fc(area_overview));write(output/'boundary.geojson',fc([dict(type='Feature',properties={},geometry=mapping(boundary))]))
  write(output/'source.json',dict(source='OpenStreetMap via Geofabrik',license='ODbL-1.0',attribution='© OpenStreetMap contributors',url='https://www.openstreetmap.org/copyright',extract_url='https://download.geofabrik.de/asia/malaysia-singapore-brunei.html',input=source.name,input_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),converted_at=datetime.now(timezone.utc).isoformat(),boundary=boundary_path.name,missing_geometry=missing))
- write(output/'manifest.json',dict(version=1,mode='osm',name='Singapore',center=center,bounds=list(boundary.bounds),boundaryFile='boundary.geojson',spawn=spawn,spawnTarget=target,chunks=index,counts=dict(buildings=len(features),roadSegments=len(segments)),estimatedHeights=True))
- print(f'Imported {len(features)} building polygons and {len(segments)} road segments in {len(chunks)} chunks; skipped {missing} ways with missing geometry.')
+ write(output/'manifest.json',dict(version=1,mode='osm',name='Singapore',center=center,bounds=list(boundary.bounds),boundaryFile='boundary.geojson',spawn=spawn,spawnTarget=target,chunks=index,counts=dict(buildings=len(features),roadSegments=len(segments),trafficSignals=len(signals),crossings=len(crossings)),estimatedHeights=True))
+ print(f'Imported {len(features)} building polygons, {len(segments)} road segments, {len(signals)} traffic signals and {len(crossings)} crossings in {len(chunks)} chunks; skipped {missing} ways with missing geometry.')
 if __name__=='__main__':
  parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('input',type=Path);parser.add_argument('--boundary',required=True,type=Path);parser.add_argument('--output',type=Path,default=ROOT);args=parser.parse_args()
  # Generate completely before touching any deployed data.

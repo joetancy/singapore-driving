@@ -1,6 +1,6 @@
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { prepareRoads, roadVisible } from "./road-network.mjs";
+import { prepareRoads, roadVisible, laneLayout, roadWidth } from "./road-network.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const output = resolve(root, "dist");
@@ -28,8 +28,11 @@ for (const c of chunks) {
     f.properties.samples = prepared.samples.get(f.id).map((p) => p.map((v, i) => Number(v.toFixed(i === 2 || i >= 4 ? 6 : 3))));
     f.properties.connections = prepared.connections.get(f.id);
     f.properties.sourceId = String(f.id).replace(/-\d+-\d+$/, "");
+    f.properties.width = roadWidth(f.properties);
+    f.properties.laneLayout = laneLayout(f.properties);
     const road = { id: f.id, name: f.properties.name || "Local road", highway: f.properties.highway,
-      width: parseFloat(f.properties.width) || 10, samples: f.properties.samples.map((p) => p.slice(0, 4)) };
+      width: f.properties.width, laneLayout: f.properties.laneLayout,
+      samples: f.properties.samples.map((p) => p.slice(0, 4)) };
     map.push(road);
     if (/^(motorway|trunk|primary|secondary|tertiary)/.test(road.highway)) {
       const samples = road.samples.filter((_, i) => i % 3 === 0);
@@ -42,7 +45,7 @@ for (const c of chunks) {
 }
 writeFileSync(resolve(output, "data/map/overview.json"), JSON.stringify(overview));
 writeFileSync(resolve(output, "data/road-warnings.json"), JSON.stringify(prepared.warnings));
-manifest.roadVersion = 2;
+manifest.roadVersion = 4;
 writeFileSync(manifestPath, JSON.stringify(manifest));
 console.log(`Prepared ${roadFeatures.length} road segments; ${prepared.warnings.length} mixed-level junctions flagged for inspection.`);
 

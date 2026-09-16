@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { prepareRoads, roadVisible } from "./road-network.mjs";
+import { prepareRoads, roadVisible, laneLayout } from "./road-network.mjs";
 import { roadIndex, surfaceAt } from "../app/js/roads.js";
 
 const center = [103.85, 1.29];
@@ -42,6 +42,30 @@ for (const id of ["left-approach", "test-bridge", "right-approach"]) {
 assert.equal(heights("left-approach").at(-1), 4);
 assert.equal(heights("right-approach")[0], 4);
 assert([...regression.samples.values()].flat().every((p) => Number.isFinite(p[2])));
+
+const identities = prepareRoads([
+  road("identity-a", [[103.853, 1.29], [103.8531, 1.29]], { endNodeId: "10" }),
+  road("identity-b", [[103.8531, 1.29], [103.8532, 1.29]], { startNodeId: "11" }),
+  road("identity-c", [[103.8531, 1.29], [103.8531, 1.2901]], { startNodeId: "10" }),
+], center);
+assert(!identities.connections.get("identity-a").end.includes("identity-b"));
+assert(identities.connections.get("identity-a").end.includes("identity-c"));
+
+assert.deepEqual(laneLayout({ highway: "residential" }), {
+  forward: 1, backward: 1, oneWay: false, reverse: false, total: 2, turnLanes: "", maxspeed: "",
+});
+assert.deepEqual(laneLayout({ highway: "primary", oneway: "yes", lanes: "3", "turn:lanes": "left|through|right", maxspeed: "50" }), {
+  forward: 3, backward: 0, oneWay: true, reverse: false, total: 3,
+  turnLanes: "left|through|right", maxspeed: "50",
+});
+assert.deepEqual(laneLayout({ highway: "primary", "lanes:forward": "2" }), {
+  forward: 2, backward: 1, oneWay: false, reverse: false, total: 3, turnLanes: "", maxspeed: "",
+});
+assert.deepEqual(laneLayout({ highway: "service", oneway: "-1", lanes: "1" }), {
+  forward: 0, backward: 1, oneWay: true, reverse: true, total: 1, turnLanes: "", maxspeed: "",
+});
+assert.equal(laneLayout({ highway: "motorway", oneway: "no" }).oneWay, false);
+assert.deepEqual(laneLayout({ highway: "residential", lanes: "x" }).warnings, ["invalid lanes"]);
 
 const layered = prepareRoads([
   road("layer-deck", [[103.852, 1.29], [103.8521, 1.29]], { layer: 1 }),

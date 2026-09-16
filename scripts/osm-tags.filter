@@ -1,4 +1,6 @@
 w/highway
+n/highway=traffic_signals
+n/highway=crossing
 w/building
 w/building:part
 r/building

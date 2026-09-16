@@ -23,7 +23,7 @@ python scripts/import_osm.py singapore.osm --boundary singapore-boundary.geojson
 
 The importer clips again to the supplied boundary, reconstructs multipolygon relations and holes, preserves OSM tags in detailed chunks, segments roads, and writes 500 m chunks, simplified overview layers, the boundary, manifest and source provenance. It sets `mode: osm`, switching the visible attribution to OpenStreetMap. Keep the input snapshot and its ODbL provenance. The derivative GeoJSON database is in `public/data/`.
 
-For direct GeoJSON replacement use the schema in the existing manifest and chunk files. Building heights use `height`, then `building:levels * 3.2`, then a 12.8 m estimate. Road widths use the OSM `width` tag or a highway-class fallback. Bridge/tunnel levels use simple vertical offsets; this is not a physically accurate multi-level road simulation. Missing elevation, grades, lane direction enforcement, traffic, interiors, and road surface collision volumes are outside this implementation.
+For direct GeoJSON replacement use the schema in the existing manifest and chunk files. Building heights use `height`, then `building:levels * 3.2`, then a 12.8 m estimate. Road widths use the OSM `width` tag or a highway-class fallback. The build prepares sampled, graded bridge and tunnel approaches plus lane metadata; this is stylised road elevation, not surveyed terrain or legal navigation.
 
 The loader fetches nearby static chunks and unloads distant building/road meshes. The road overview and vegetation are prepared at startup; extremely large extracts may need additional overview simplification and vegetation tiling. There is no measured performance guarantee for a full-island extract yet.
 
@@ -43,4 +43,4 @@ The loader fetches nearby static chunks and unloads distant building/road meshes
 
 ## Validation
 
-JavaScript syntax, static asset references, geometry construction and driving/collision calculations are checked locally.
+Run `npm test`, `npm run check`, and `npm run build`. With Shapely installed, also run `python scripts/clearance.test.py`. These checks cover road preparation, surface contact, lane normalization, and importer building-clearance geometry.

@@ -10,6 +10,42 @@ export const nominalHeight = (p) => {
   if ((p.tunnel && p.tunnel !== "no") || layer < 0) return Math.min(-4, layer * 4);
   return p.bridge && p.bridge !== "no" ? Math.max(4, layer * 4) : Math.max(0, layer * 4);
 };
+const count = (value) => Number.isInteger(Number(value)) && Number(value) > 0 ? Number(value) : 0;
+export function roadWidth(properties = {}) {
+  const fallback = { motorway: 18, trunk: 18, primary: 16, secondary: 14,
+    tertiary: 11, residential: 9, service: 6 }[properties.highway] || 10;
+  return Math.max(4, Math.min(32, parseFloat(properties.width) || fallback));
+}
+// OSM ways are drawn in their recorded direction. Singapore traffic keeps left.
+export function laneLayout(properties = {}) {
+  const explicitNo = properties.oneway === "no" || properties.oneway === "0";
+  const oneWay = !explicitNo && (properties.oneway === "yes" || properties.oneway === "1" ||
+    properties.junction === "roundabout" || /^motorway/.test(properties.highway || ""));
+  const reverse = properties.oneway === "-1";
+  let forward = count(properties["lanes:forward"]), backward = count(properties["lanes:backward"]);
+  const total = count(properties.lanes);
+  if (oneWay) forward ||= total || Math.max(1, Math.round(roadWidth(properties) / 3.2));
+  else if (!forward && !backward) {
+    forward = total ? Math.ceil(total / 2) : 1;
+    backward = total ? Math.floor(total / 2) : 1;
+  } else if (total) {
+    if (!forward) forward = Math.max(1, total - backward);
+    if (!backward) backward = Math.max(1, total - forward);
+  } else {
+    forward ||= 1;
+    backward ||= 1;
+  }
+  const warnings = [];
+  if (properties.lanes && !total) warnings.push("invalid lanes");
+  if (properties["lanes:forward"] && !count(properties["lanes:forward"])) warnings.push("invalid lanes:forward");
+  if (properties["lanes:backward"] && !count(properties["lanes:backward"])) warnings.push("invalid lanes:backward");
+  const fallback = total || forward || Math.max(1, Math.round(roadWidth(properties) / 3.2));
+  const result = { forward: reverse ? 0 : forward, backward: reverse ? fallback : backward,
+    oneWay: oneWay || reverse, reverse, total: reverse ? fallback : forward + backward,
+    turnLanes: properties["turn:lanes"] || "", maxspeed: properties.maxspeed || "" };
+  if (warnings.length) result.warnings = warnings;
+  return result;
+}
 // Tunnels are rendered below the terrain and exposed through a local terrain
 // cutout while the car is underground. They still need samples for spawning,
 // surface contact and entrance/exit ramps.
@@ -21,8 +57,8 @@ const maxGrade = 0.0795; // Leaves rounding headroom in serialized metre coordin
 
 export function prepareRoads(features, center) {
   const nodes = new Map(), edges = [], paths = new Map();
-  const node = (p) => {
-    const id = key(p);
+  const node = (p, identity) => {
+    const id = identity == null ? `coordinate:${key(p)}` : `osm:${identity}`;
     if (!nodes.has(id)) nodes.set(id, { id, p: project(p, center), edges: [] });
     return nodes.get(id);
   };
@@ -31,7 +67,8 @@ export function prepareRoads(features, center) {
     if (f.geometry.type !== "LineString" || !roadVisible(f.properties)) continue;
     const source = String(f.id).replace(/-\d+-\d+$/, "");
     for (let i = 1; i < coordinates.length; i++) {
-      const a = node(coordinates[i - 1]), b = node(coordinates[i]);
+      const a = node(coordinates[i - 1], i === 1 ? f.properties.startNodeId : null);
+      const b = node(coordinates[i], i === coordinates.length - 1 ? f.properties.endNodeId : null);
       if (length(a.p, b.p) < 0.01) continue;
       const h = nominalHeight(f.properties);
       const e = { a, b, f, source, h, ah: h, bh: h, length: length(a.p, b.p) };

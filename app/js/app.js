@@ -6,6 +6,8 @@ import {
   mergeInto,
   polygonShape,
   ringsOf,
+  quad,
+  tunnelPassage,
 } from "./geometry.js";
 import { loadPreferences, saveNight, saveSpawn } from "./storage.js";
 import { roadIndex, surfaceAt, sampleHeight } from "./roads.js";
@@ -38,7 +40,8 @@ let renderer,
   firstPerson = false,
   night = false,
   skyLight,
-  sunLight;
+  sunLight,
+  nightLights = [];
 let roads = [],
   obstacles = [],
   waterPolygons = [],
@@ -60,8 +63,9 @@ const lookTarget = new THREE.Vector3(),
 const worldMaterials = {},
   buildingNightUniform = { value: 0 },
   tunnelCutout = {
-    center: { value: new THREE.Vector2() },
-    radius: { value: 0 },
+    count: { value: 0 },
+    segments: { value: Array.from({ length: 64 }, () => new THREE.Vector4()) },
+    widths: { value: Array(64).fill(0) },
   };
 let surfaces = roadIndex([]), activeRoad = null, spawnSelection = null;
 function toast(text) {
@@ -105,8 +109,9 @@ function createChunk(data) {
     bridgeGeo = [],
     roadGeo = [],
     pavementGeo = [],
-    markGeo = [],
+    markGeo = [], tunnelGeo = [], lampGeo = [], lampHeadGeo = [], signalGeo = [], signalRedGeo = [], signalAmberGeo = [], signalGreenGeo = [],
     segments = [],
+    lampPoints = [],
     blocks = [],
     buildingBases = data.features
       .filter((f) => {
@@ -119,8 +124,39 @@ function createChunk(data) {
         );
       })
       .flatMap((f) => ringsOf(f).map((raw) => raw.map((ring) => ring.map(point))));
+  const roadAt = (x, z) => {
+    let best = null;
+    for (const f of data.features) if (f.geometry.type === "LineString") {
+      const width = clamp(parseFloat(f.properties?.width) || 10, 4, 32), pts = f.geometry.coordinates.map(point);
+      for (let i = 1; i < pts.length; i++) {
+        const hit = nearestPoint(x, z, pts[i - 1], pts[i]);
+        if (!best || hit.d < best.d) best = { ...hit, a: pts[i - 1], b: pts[i], width };
+      }
+    }
+    return best;
+  };
   for (const f of data.features) {
     const props = f.properties || {};
+    if (f.geometry.type === "Point" && props.highway === "traffic_signals") {
+      const [x, z] = point(f.geometry.coordinates);
+      const pole = new THREE.CylinderGeometry(0.09, 0.12, 5.5, 6); pole.translate(x, 2.75, z); signalGeo.push(pole);
+      const head = new THREE.BoxGeometry(0.55, 1.35, 0.34); head.translate(x, 5.1, z); signalGeo.push(head);
+      for (const [geo, y] of [[signalRedGeo, 5.48], [signalAmberGeo, 5.1], [signalGreenGeo, 4.72]]) {
+        const lamp = new THREE.SphereGeometry(0.12, 6, 4); lamp.translate(x, y, z - 0.19); geo.push(lamp);
+      }
+      continue;
+    }
+    if (f.geometry.type === "Point" && props.highway === "crossing") {
+      const [x, z] = point(f.geometry.coordinates), road = roadAt(x, z);
+      if (!road || road.d > road.width / 2 + 2) continue;
+      const dx = road.b[0] - road.a[0], dz = road.b[1] - road.a[1], length = Math.hypot(dx, dz);
+      for (let offset = -1.4; offset <= 1.4; offset += 0.55) {
+        const cx = x + dx / length * offset, cz = z + dz / length * offset;
+        markGeo.push(quad([cx + dz / length * road.width / 2, cz - dx / length * road.width / 2],
+          [cx - dz / length * road.width / 2, cz + dx / length * road.width / 2], 0.32, 0.1, "#f4f3e6"));
+      }
+      continue;
+    }
     if (
       f.geometry.type === "LineString" ||
       f.geometry.type === "MultiLineString"
@@ -138,8 +174,10 @@ function createChunk(data) {
           name: props.name || "Local road", oneway: props.oneway,
           source: props.sourceId || String(f.id).replace(/-\d+-\d+$/, ""), featureId: f.id,
           connections: [...(props.connections?.start || []), ...(props.connections?.end || [])],
-          highway: props.highway };
+          highway: props.highway, laneLayout: props.laneLayout,
+          tunnel: props.tunnel && props.tunnel !== "no" || Number(props.layer) < 0 };
         segments.push(segment);
+        if (segment.tunnel) tunnelGeo.push(tunnelPassage(a, b, width + 2));
         const elevated = Math.max(a[2], b[2]) > 0.3;
         if (elevated) {
           bridgeGeo.push(deck(a, b, width + 4));
@@ -155,14 +193,30 @@ function createChunk(data) {
         pavementGeo.push(ribbon(a, b, width + 4, 0.025, "#b4bdb8"));
         roadGeo.push(ribbon(a, b, width, 0.065, "#48575b"));
         const interpolate = (t) => a.map((v, j) => v + (b[j] - v) * t);
-        for (let d = Math.floor(a[3] / 13) * 13; d < b[3]; d += 13) {
+        const lanes = props.laneLayout;
+        const dividers = lanes?.total > 1 ? Array.from({ length: lanes.total - 1 }, (_, n) =>
+          (n + 1 - lanes.total / 2) * width / lanes.total) : [];
+        for (const lateral of dividers) for (let d = Math.floor(a[3] / 13) * 13; d < b[3]; d += 13) {
           const lo = Math.max(d, a[3]), hi = Math.min(d + 5, b[3]);
-          if (hi > lo) markGeo.push(ribbon(
+          const nearJunction = (props.connections?.start?.length && lo - a[3] < 8) ||
+            (props.connections?.end?.length && b[3] - hi < 8);
+          if (hi > lo && !nearJunction) markGeo.push(ribbon(
             interpolate((lo - a[3]) / (b[3] - a[3])),
-            interpolate((hi - a[3]) / (b[3] - a[3])), 0.16, 0.09, "#e7e8d6"));
+            interpolate((hi - a[3]) / (b[3] - a[3])), 0.16, 0.09, "#e7e8d6", lateral));
         }
         for (const side of [-1, 1])
           markGeo.push(ribbon(a, b, 0.12, 0.09, "#d3c990", side * (width / 2 - 0.65)));
+        const spacing = { motorway: 50, trunk: 45, primary: 45 }[props.highway] || 40;
+        if (!segment.tunnel) for (let d = Math.ceil((a[3] + 0.01) / spacing) * spacing; d < b[3] - 0.01; d += spacing) {
+          if ((props.connections?.start?.length && d - a[3] < 12) || (props.connections?.end?.length && b[3] - d < 12)) continue;
+          const t = (d - a[3]) / (b[3] - a[3]), p = interpolate(t), side = Math.floor(d / spacing) % 2 ? 1 : -1;
+          const x = p[0] + p[4] * side * (width / 2 + 1.5), z = p[1] + p[5] * side * (width / 2 + 1.5);
+          const blocked = buildingBases.some((rings) => inPolygon(x, z, rings)) || waterPolygons.some((rings) => inPolygon(x, z, rings));
+          if (blocked) continue;
+          const pole = new THREE.CylinderGeometry(0.08, 0.12, 8, 6); pole.translate(x, p[2] + 4, z); lampGeo.push(pole);
+          const head = new THREE.SphereGeometry(0.22, 6, 4); head.translate(x, p[2] + 7.9, z); lampHeadGeo.push(head);
+          lampPoints.push([x, p[2] + 7.9, z]);
+        }
       }
     } else {
       const height = clamp(
@@ -173,9 +227,15 @@ function createChunk(data) {
           310,
         ),
         base = Math.max(0, parseFloat(props.min_height) || 0);
-      for (const raw of ringsOf(f)) {
+      const clearance = props.clearanceGeometry,
+        clearanceHeight = Math.min(height, Number(props.clearanceHeight) || height),
+        bands = clearance ? [
+          [ringsOf({ geometry: clearance }), base, clearanceHeight],
+          ...(height > clearanceHeight ? [[ringsOf(f), clearanceHeight, height]] : []),
+        ] : [[ringsOf(f), base, height]];
+      for (const [shapes, bandBase, bandHeight] of bands) for (const raw of shapes) {
         const rings = raw.map((r) => r.map(point));
-        if (rings[0].length < 4) continue;
+        if (!rings[0] || rings[0].length < 4) continue;
         if (
           props["building:part"] &&
           buildingBases.some((base) => inPolygon(rings[0][0][0], rings[0][0][1], base))
@@ -184,9 +244,9 @@ function createChunk(data) {
         const hash = String(f.id || height)
             .split("")
             .reduce((a, c) => a + c.charCodeAt(0), 0),
-          renderBase = base + (hash % 23) * 0.006,
+          renderBase = bandBase + (hash % 23) * 0.006,
           g = new THREE.ExtrudeGeometry(polygonShape(rings), {
-            depth: Math.max(1, height - base),
+            depth: Math.max(0.01, bandHeight - bandBase),
             bevelEnabled: false,
             steps: 1,
             curveSegments: 1,
@@ -197,8 +257,9 @@ function createChunk(data) {
         buildingGeo.push(colourGeometry(g, palette[hash % palette.length]));
         blocks.push({
           rings,
-          base,
-          height,
+          clearancePrepared: !!clearance,
+          base: bandBase,
+          height: bandHeight,
           bbox: [
             Math.min(...rings[0].map((p) => p[0])),
             Math.min(...rings[0].map((p) => p[1])),
@@ -211,10 +272,17 @@ function createChunk(data) {
   }
   mergeInto(group, pavementGeo.filter(Boolean), worldMaterials.pavement);
   mergeInto(group, bridgeGeo, worldMaterials.bridge);
+  mergeInto(group, tunnelGeo, worldMaterials.tunnel);
   mergeInto(group, roadGeo.filter(Boolean), worldMaterials.road);
   mergeInto(group, markGeo.filter(Boolean), worldMaterials.mark);
+  mergeInto(group, lampGeo, worldMaterials.lamp);
+  mergeInto(group, lampHeadGeo, worldMaterials.lampHead);
+  mergeInto(group, signalGeo, worldMaterials.signal);
+  mergeInto(group, signalRedGeo, worldMaterials.signalRed);
+  mergeInto(group, signalAmberGeo, worldMaterials.signalAmber);
+  mergeInto(group, signalGreenGeo, worldMaterials.signalGreen);
   mergeInto(group, buildingGeo, worldMaterials.building, true);
-  group.userData = { segments, blocks };
+  group.userData = { segments, blocks, lamps: lampPoints };
   return group;
 }
 function createAreas(data) {
@@ -255,6 +323,35 @@ function rebuildCollisionLists() {
   }
   updateMinimapRoads();
   surfaces = roadIndex(roads);
+  updateTunnelOpenings();
+  updateNightLights();
+}
+function updateNightLights() {
+  for (const light of nightLights) scene.remove(light);
+  nightLights = [];
+  if (!night) return;
+  const lamps = [...chunkState.values()].flatMap((c) => c.group?.userData.lamps || [])
+    .sort((a, b) => Math.hypot(a[0] - state.x, a[2] - state.z) - Math.hypot(b[0] - state.x, b[2] - state.z))
+    .slice(0, 8);
+  for (const [x, y, z] of lamps) {
+    const light = new THREE.PointLight("#ffe6a5", 1.2, 100, 2);
+    light.position.set(x, y, z);
+    scene.add(light);
+    nightLights.push(light);
+  }
+}
+function updateTunnelOpenings() {
+  // ponytail: 64 nearby passages fit WebGL1 uniforms; tile the ground if dense tunnel networks exceed it.
+  const nearby = roads.filter((r) => r.tunnel)
+    .sort((a, b) => Math.min(Math.hypot(state.x - a.a[0], state.z - a.a[1]), Math.hypot(state.x - a.b[0], state.z - a.b[1])) -
+      Math.min(Math.hypot(state.x - b.a[0], state.z - b.a[1]), Math.hypot(state.x - b.b[0], state.z - b.b[1])))
+    .slice(0, 64);
+  tunnelCutout.count.value = nearby.length;
+  for (let i = 0; i < 64; i++) {
+    const r = nearby[i];
+    tunnelCutout.segments.value[i].set(r?.a[0] || 0, r?.a[1] || 0, r?.b[0] || 0, r?.b[1] || 0);
+    tunnelCutout.widths.value[i] = r ? r.width / 2 + 1 : 0;
+  }
 }
 function updateMinimapRoads() {
   const d = roads
@@ -549,7 +646,9 @@ function blocked(x, z, y, road = null) {
   // Imported buildings occasionally overlap a mapped road. The road contract
   // wins at the point of contact so bad footprints cannot make a route
   // impassable; off-road collisions remain unchanged.
-  if (road && road.d <= road.width / 2 + 0.6) return false;
+  // Legacy source assets lack import-time clearance. Newer assets carry
+  // clearancePrepared and can use their derived building polygons directly.
+  if (road && road.d <= road.width / 2 + 0.6 && !obstacles.some((b) => b.clearancePrepared)) return false;
   const boxRadius = 2.3;
   for (const b of obstacles) {
     if (b.base > y + 1.7 || b.height < y) continue;
@@ -592,10 +691,14 @@ function resetCar(announce = true) {
     const dx = nearest.b[0] - nearest.a[0],
       dz = nearest.b[1] - nearest.a[1],
       l = Math.hypot(dx, dz);
-    const dir =
+    let dir =
       Math.sin(state.yaw) * dx - Math.cos(state.yaw) * dz >= 0 ? 1 : -1;
-    state.x = nearest.x + (dz / l) * nearest.width * 0.24 * dir;
-    state.z = nearest.z - (dx / l) * nearest.width * 0.24 * dir;
+    if (nearest.laneLayout?.oneWay) dir = nearest.laneLayout.reverse ? -1 : 1;
+    state.yaw = Math.atan2(dx * dir, -dz * dir);
+    const lanes = nearest.laneLayout,
+      lateral = lanes?.total ? (nearest.width / 2 - nearest.width / (2 * lanes.total)) * dir : nearest.width * 0.24 * dir;
+    state.x = nearest.x - (dz / l) * lateral;
+    state.z = nearest.z + (dx / l) * lateral;
     smoothGround = nearest.y;
     activeRoad = nearest;
     nearRoad = nearest;
@@ -726,8 +829,16 @@ function hud() {
   $("gear").textContent =
     state.speed < -0.2 ? "R" : state.speed > 0.2 ? "D" : "N";
   $("distance").innerHTML = distance.toFixed(2) + " <small>KM</small>";
+  const roadDx = nearRoad?.b[0] - nearRoad?.a[0], roadDz = nearRoad?.b[1] - nearRoad?.a[1];
+  const roadLength = nearRoad && Math.hypot(roadDx, roadDz);
+  const travel = nearRoad && (Math.sin(state.yaw) * roadDx - Math.cos(state.yaw) * roadDz);
+  const lateral = nearRoad && ((state.x - nearRoad.x) * -roadDz + (state.z - nearRoad.z) * roadDx) / roadLength;
+  const wrongWay = nearRoad?.laneLayout && kmh > 5 && Math.abs(lateral) > 0.5 &&
+    (travel * lateral < 0 || (nearRoad.laneLayout.oneWay && travel * (nearRoad.laneLayout.reverse ? -1 : 1) < 0));
   $("surface").textContent = paused
     ? "PAUSED"
+    : wrongWay
+      ? "WRONG WAY"
     : nearRoad && nearRoad.d < nearRoad.width / 2 + 1
       ? firstPerson
         ? "DRIVER VIEW"
@@ -735,7 +846,9 @@ function hud() {
           ? "KEEP LEFT"
           : "READY TO DRIVE"
       : "OFF ROAD";
-  $("street").textContent = nearRoad?.name || "Marina Bay";
+  $("street").textContent = nearRoad && nearRoad.d < nearRoad.width / 2 + 1
+    ? nearRoad.name || ""
+    : "";
   const ll = projection.invert([state.x, state.z]);
   $("coordinates").textContent =
     ll[1].toFixed(3) + "° N, " + ll[0].toFixed(3) + "° E";
@@ -778,7 +891,7 @@ function animate() {
       const before = surfaceAt(surfaces, oldX, oldZ, activeRoad, smoothGround);
       stepCar(state, input, dt / steps, !!before);
       const contact = surfaceAt(surfaces, state.x, state.z, activeRoad, smoothGround);
-      const edge = !contact && smoothGround > 0.3;
+      const edge = !contact && Math.abs(smoothGround) > 0.3;
       const ll = projection.invert([state.x, state.z]),
         bb = manifest.bounds;
       const outside =
@@ -819,8 +932,6 @@ function animate() {
     }
   }
   car.position.set(state.x, smoothGround + 0.08, state.z);
-  tunnelCutout.center.value.set(state.x, state.z);
-  tunnelCutout.radius.value = smoothGround < -0.3 ? 42 : 0;
   car.rotation.y = -state.yaw;
   const slope = activeRoad ? (activeRoad.b[2] - activeRoad.a[2]) /
     Math.hypot(activeRoad.b[0] - activeRoad.a[0], activeRoad.b[1] - activeRoad.a[1]) : 0;
@@ -866,6 +977,7 @@ function animate() {
     lastStream = now;
     streamChunks().catch(console.error);
   }
+  if (frame % 30 === 0) updateNightLights();
   if (frame % 5 === 0) hud();
   renderer.render(scene, camera);
 }
@@ -898,19 +1010,26 @@ async function init() {
       side: THREE.DoubleSide,
     });
     groundMaterial.onBeforeCompile = (shader) => {
-      shader.uniforms.uTunnelCenter = tunnelCutout.center;
-      shader.uniforms.uTunnelRadius = tunnelCutout.radius;
+      shader.uniforms.uTunnelCount = tunnelCutout.count;
+      shader.uniforms.uTunnelSegments = tunnelCutout.segments;
+      shader.uniforms.uTunnelWidths = tunnelCutout.widths;
       shader.vertexShader = "varying vec2 vTunnelWorld;\n" + shader.vertexShader;
       shader.vertexShader = shader.vertexShader.replace(
         "#include <worldpos_vertex>",
         "#include <worldpos_vertex>\nvTunnelWorld = (modelMatrix * vec4(transformed, 1.0)).xz;",
       );
       shader.fragmentShader =
-        "uniform vec2 uTunnelCenter; uniform float uTunnelRadius; varying vec2 vTunnelWorld;\n" +
+        "uniform int uTunnelCount; uniform vec4 uTunnelSegments[64]; uniform float uTunnelWidths[64]; varying vec2 vTunnelWorld;\n" +
         shader.fragmentShader;
       shader.fragmentShader = shader.fragmentShader.replace(
         "#include <clipping_planes_fragment>",
-        "#include <clipping_planes_fragment>\nif (uTunnelRadius > 0.0 && distance(vTunnelWorld, uTunnelCenter) < uTunnelRadius) discard;",
+        `#include <clipping_planes_fragment>
+        for (int i = 0; i < 64; i++) {
+          if (i >= uTunnelCount) break;
+          vec2 a = uTunnelSegments[i].xy, b = uTunnelSegments[i].zw, ab = b - a;
+          float t = clamp(dot(vTunnelWorld - a, ab) / max(dot(ab, ab), 0.001), 0.0, 1.0);
+          if (distance(vTunnelWorld, a + ab * t) < uTunnelWidths[i]) discard;
+        }`,
       );
     };
     const ground = new THREE.Mesh(
@@ -936,11 +1055,22 @@ async function init() {
       color: "#718184",
       roughness: 0.9,
     });
+    worldMaterials.tunnel = new THREE.MeshStandardMaterial({
+      color: "#5d6668",
+      roughness: 1,
+      side: THREE.DoubleSide,
+    });
     worldMaterials.mark = new THREE.MeshBasicMaterial({
       polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
       vertexColors: true,
       side: THREE.DoubleSide,
     });
+    worldMaterials.lamp = new THREE.MeshStandardMaterial({ color: "#808080", roughness: 0.65 });
+    worldMaterials.lampHead = new THREE.MeshBasicMaterial({ color: "#fff0b0" });
+    worldMaterials.signal = new THREE.MeshStandardMaterial({ color: "#141819", roughness: 0.7 });
+    worldMaterials.signalRed = new THREE.MeshBasicMaterial({ color: "#d84a3b" });
+    worldMaterials.signalAmber = new THREE.MeshBasicMaterial({ color: "#dca93a" });
+    worldMaterials.signalGreen = new THREE.MeshBasicMaterial({ color: "#4da55a" });
     worldMaterials.building = new THREE.MeshStandardMaterial({
       vertexColors: true,
       roughness: 0.77,
