@@ -109,7 +109,7 @@ function createChunk(data) {
     bridgeGeo = [],
     roadGeo = [],
     pavementGeo = [],
-    markGeo = [], stopGeo = [], tunnelGeo = [], lampGeo = [], lampHeadGeo = [], signalGeo = [], signalRedGeo = [], signalAmberGeo = [], signalGreenGeo = [],
+    markGeo = [], stopGeo = [], tunnelGeo = [], lampGeo = [], lampHeadGeo = [],
     segments = [],
     lampPoints = [],
     blocks = [],
@@ -137,15 +137,7 @@ function createChunk(data) {
   };
   for (const f of data.features) {
     const props = f.properties || {};
-    if (f.geometry.type === "Point" && props.highway === "traffic_signals") {
-      const [x, z] = point(f.geometry.coordinates);
-      const pole = new THREE.CylinderGeometry(0.09, 0.12, 5.5, 6); pole.translate(x, 2.75, z); signalGeo.push(pole);
-      const head = new THREE.BoxGeometry(0.55, 1.35, 0.34); head.translate(x, 5.1, z); signalGeo.push(head);
-      for (const [geo, y] of [[signalRedGeo, 5.48], [signalAmberGeo, 5.1], [signalGreenGeo, 4.72]]) {
-        const lamp = new THREE.SphereGeometry(0.12, 6, 4); lamp.translate(x, y, z - 0.19); geo.push(lamp);
-      }
-      continue;
-    }
+    if (f.geometry.type === "Point" && props.highway === "traffic_signals") continue;
     if (f.geometry.type === "Point" && props.highway === "crossing") {
       const [x, z] = point(f.geometry.coordinates), road = roadAt(x, z);
       if (!road || road.d > road.width / 2 + 2) continue;
@@ -227,6 +219,15 @@ function createChunk(data) {
           const head = new THREE.SphereGeometry(0.22, 6, 4); head.translate(x, p[2] + 7.9, z); lampHeadGeo.push(head);
           lampPoints.push([x, p[2] + 7.9, z]);
         }
+        if (!segment.tunnel && pts.length > 1 && pts[pts.length - 1][3] - pts[0][3] < spacing && i === Math.floor((pts.length - 2) / 2)) {
+          const p = interpolate(0.5), side = i % 2 ? 1 : -1;
+          const x = p[0] + p[4] * side * (width / 2 + 1.5), z = p[1] + p[5] * side * (width / 2 + 1.5);
+          if (!buildingBases.some((rings) => inPolygon(x, z, rings)) && !waterPolygons.some((rings) => inPolygon(x, z, rings))) {
+            const pole = new THREE.CylinderGeometry(0.08, 0.12, 8, 6); pole.translate(x, p[2] + 4, z); lampGeo.push(pole);
+            const head = new THREE.SphereGeometry(0.22, 6, 4); head.translate(x, p[2] + 7.9, z); lampHeadGeo.push(head);
+            lampPoints.push([x, p[2] + 7.9, z]);
+          }
+        }
       }
     } else {
       const height = clamp(
@@ -288,10 +289,6 @@ function createChunk(data) {
   mergeInto(group, stopGeo.filter(Boolean), worldMaterials.mark);
   mergeInto(group, lampGeo, worldMaterials.lamp);
   mergeInto(group, lampHeadGeo, worldMaterials.lampHead);
-  mergeInto(group, signalGeo, worldMaterials.signal);
-  mergeInto(group, signalRedGeo, worldMaterials.signalRed);
-  mergeInto(group, signalAmberGeo, worldMaterials.signalAmber);
-  mergeInto(group, signalGreenGeo, worldMaterials.signalGreen);
   mergeInto(group, buildingGeo, worldMaterials.building, true);
   group.userData = { segments, blocks, lamps: lampPoints };
   return group;
@@ -1078,10 +1075,6 @@ async function init() {
     });
     worldMaterials.lamp = new THREE.MeshStandardMaterial({ color: "#808080", roughness: 0.65 });
     worldMaterials.lampHead = new THREE.MeshBasicMaterial({ color: "#fff0b0" });
-    worldMaterials.signal = new THREE.MeshStandardMaterial({ color: "#141819", roughness: 0.7 });
-    worldMaterials.signalRed = new THREE.MeshBasicMaterial({ color: "#d84a3b" });
-    worldMaterials.signalAmber = new THREE.MeshBasicMaterial({ color: "#dca93a" });
-    worldMaterials.signalGreen = new THREE.MeshBasicMaterial({ color: "#4da55a" });
     worldMaterials.building = new THREE.MeshStandardMaterial({
       vertexColors: true,
       roughness: 0.77,
