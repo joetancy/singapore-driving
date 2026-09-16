@@ -88,7 +88,11 @@ export function prepareRoads(features, center) {
   const continuation = (e, n) => {
     const far = e.a === n ? e.b : e.a;
     const ux = (far.p[0] - n.p[0]) / e.length, uz = (far.p[1] - n.p[1]) / e.length;
-    const matches = n.edges.filter((other) => other !== e).map((other) => {
+    // Continue a declared level before considering a portal transition. A
+    // surface branch at a shared node must not pull an ongoing tunnel upward.
+    const alternatives = n.edges.filter((other) => other !== e);
+    const sameLevel = alternatives.filter((other) => other.h === e.h);
+    const matches = (sameLevel.length ? sameLevel : alternatives).map((other) => {
       const end = other.a === n ? other.b : other.a;
       return { other, score: -(ux * (end.p[0] - n.p[0]) + uz * (end.p[1] - n.p[1])) / other.length };
     }).filter(({ score }) => score >= Math.cos(Math.PI / 6)).sort((a, b) => b.score - a.score);

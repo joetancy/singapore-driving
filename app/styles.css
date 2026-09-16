@@ -947,3 +947,42 @@ dd {
 .night .brand {
   color: #d8e8ff;
 }
+
+/* Keep the camera action available even when the rest of the dock is closed. */
+.top-actions .view-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: auto;
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 14px;
+  color: #effff9;
+  background: #163d43;
+  border: 1px solid #ffffff50;
+  box-shadow: 0 4px 18px #102e3430;
+}
+.view-label { font-size: 12px; font-weight: 700; white-space: nowrap; }
+.top-actions .view-button::after { content: none; }
+.icon-button:focus-visible { outline: 3px solid #43cbaa; outline-offset: 3px; }
+@media (max-width: 760px) {
+  .top-actions { gap: 10px; }
+  .action-items {
+    padding: 10px;
+    border: 1px solid #ffffff90;
+    border-radius: 20px;
+    background: #eff8f5f2;
+    box-shadow: 0 12px 36px #08252c30;
+    max-height: calc(100dvh - 210px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .top-actions .action-items .icon-button {
+    width: 148px;
+    background: #ffffff;
+    border-color: #183e441a;
+    box-shadow: none;
+  }
+  .top-actions .view-button { min-width: 128px; }
+}
