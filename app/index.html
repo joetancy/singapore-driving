@@ -30,31 +30,34 @@
             <p>A LITTLE ISLAND. AN OPEN ROAD.</p>
           </div>
         </div>
-        <div class="top-actions actions-collapsed">
+        <div class="top-actions">
+          <button id="open-settings" class="icon-button settings-open" type="button" aria-haspopup="dialog" aria-controls="settings">⚙ Settings</button>
+        </div>
+      </header>
+      <dialog id="settings" class="settings-page" aria-labelledby="settings-title">
+        <header class="settings-heading"><div><p class="eyebrow">MAKE IT YOUR DRIVE</p><h2 id="settings-title">Settings</h2></div>
+          <button id="close-settings" class="icon-button" aria-label="Close settings">×</button></header>
+        <section class="settings-section" aria-labelledby="traffic-title">
+          <h3 id="traffic-title">Traffic</h3>
+          <p>Share the road with cars, buses, motorcycles and lorries.</p>
+          <label for="traffic-density">Traffic intensity <output id="traffic-value" for="traffic-density">30%</output></label>
+          <input id="traffic-density" type="range" min="0" max="100" step="10" value="30" />
+          <div class="range-labels"><span>Off</span><span>Busy</span></div>
+          <p class="settings-note">Changes apply as you drive. Higher traffic uses more device power.</p>
+        </section>
+        <section class="settings-section" aria-labelledby="driving-title"><h3 id="driving-title">View &amp; display</h3>
+        <div class="settings-controls">
           <button id="view-toggle" class="icon-button view-button" type="button"
             data-label="Driver view" aria-label="Switch to driver view" aria-pressed="false">
             <span aria-hidden="true">◉</span><span class="view-label">Driver view</span>
           </button>
           <button
-            id="actions-toggle"
-            class="icon-button actions-toggle"
-            type="button"
-            data-label="Controls"
-            aria-controls="mobile-actions"
-            aria-expanded="false"
-            aria-label="Open driving controls"
-          >
-            ☰</button
-          >
-          <div id="mobile-actions" class="action-items">
-          <span class="country">SG <span>01° N · 103° E</span></span
-          ><button
             id="spawn-picker"
             class="icon-button"
             data-label="Choose start"
             aria-label="Choose a starting road"
           >
-            🗺️</button
+            <span aria-hidden="true">🗺️</span> Choose starting road</button
           ><button
             id="night-toggle"
             class="icon-button mode-button"
@@ -68,18 +71,20 @@
             data-label="Hide interface"
             aria-label="Hide driving interface"
           >
-            👁️</button
+            <span class="hud-label">Hide driving interface</span></button
           ><button
             id="help"
             class="icon-button"
             data-label="Help"
             aria-label="Controls and map information"
           >
-            ?</button
+            Driving help</button
           >
-          </div>
         </div>
-      </header>
+        </section>
+        <p class="settings-note">The simulation keeps running while settings are open.</p>
+        <button id="settings-done" class="primary-button">Back to driving</button>
+      </dialog>
       <section class="location glass" aria-label="Current location">
         <div class="eyebrow">
           EXPLORE SINGAPORE <span class="location-line"></span>
