@@ -82,6 +82,7 @@ function setNight(value) {
     night ? "Enable day mode" : "Enable night mode",
   );
   $("night-toggle").textContent = night ? "☀️" : "🌙";
+  $("night-toggle").dataset.label = night ? "Day mode" : "Night mode";
   saveNight(night);
   if (!scene) return;
   scene.background.set(night ? "#07131f" : "#b2d2d6");
@@ -92,6 +93,10 @@ function setNight(value) {
   sunLight.color.set(night ? "#91b7ff" : "#fff0cb");
   sunLight.intensity = night ? 0.45 : 3;
   worldMaterials.water?.color.set(night ? "#173d65" : "#4f939a");
+  if (worldMaterials.lampGlow)
+    worldMaterials.lampGlow.opacity = night ? 0.2 : 0.045;
+  if (worldMaterials.lampHead)
+    worldMaterials.lampHead.emissiveIntensity = night ? 2.6 : 0.35;
 }
 async function json(url) {
   const response = await fetch(url);
@@ -102,13 +107,52 @@ async function json(url) {
 function point(p) {
   return projection(p);
 }
+function orientedBox(width, height, depth, x, y, z, yaw = 0) {
+  const geometry = new THREE.BoxGeometry(width, height, depth);
+  geometry.rotateY(yaw);
+  geometry.translate(x, y, z);
+  return geometry;
+}
+function downGlow(x, y, z, radius = 2.2, height = 5) {
+  const geometry = new THREE.ConeGeometry(radius, height, 10, 1, true);
+  geometry.translate(x, y - height / 2, z);
+  return geometry;
+}
+function addTunnelPortal(a, b, width, frames, insets) {
+  const threshold = -0.3;
+  if ((a[2] - threshold) * (b[2] - threshold) > 0 || a[2] === b[2]) return;
+  const t = clamp((threshold - a[2]) / (b[2] - a[2]), 0, 1),
+    x = a[0] + (b[0] - a[0]) * t,
+    z = a[1] + (b[1] - a[1]) * t,
+    dx = b[0] - a[0],
+    dz = b[1] - a[1],
+    length = Math.hypot(dx, dz) || 1,
+    nx = -dz / length,
+    nz = dx / length,
+    yaw = Math.atan2(dx, dz),
+    side = width / 2 + 0.85,
+    base = threshold;
+  for (const direction of [-1, 1])
+    frames.push(orientedBox(1.35, 4.8, 2.6,
+      x + nx * side * direction, base + 2.4, z + nz * side * direction, yaw));
+  frames.push(orientedBox(width + 3.05, 1.25, 2.6,
+    x, base + 4.45, z, yaw));
+  insets.push(orientedBox(width + 1.1, 0.22, 2.72,
+    x, base + 3.72, z, yaw));
+}
 function createChunk(data) {
   const group = new THREE.Group(),
     buildingGeo = [],
     bridgeGeo = [],
     roadGeo = [],
+    tunnelRoadGeo = [],
     pavementGeo = [],
     markGeo = [], tunnelGeo = [], lampGeo = [], lampHeadGeo = [],
+    lampGlowGeo = [],
+    portalGeo = [],
+    portalInsetGeo = [],
+    tunnelLightGeo = [],
+    tunnelGlowGeo = [],
     segments = [],
     lampPoints = [],
     blocks = [],
@@ -176,7 +220,8 @@ function createChunk(data) {
           tunnel: props.tunnel && props.tunnel !== "no" || Number(props.layer) < 0 };
         segments.push(segment);
         if (segment.tunnel) tunnelGeo.push(tunnelPassage(a, b, width + 2));
-        const elevated = Math.max(a[2], b[2]) > 0.3;
+        const elevated = Math.max(a[2], b[2]) > 0.3,
+          underground = Math.min(a[2], b[2]) < -0.3;
         if (elevated) {
           bridgeGeo.push(deck(a, b, width + 4));
           if (!atJunction(a[3]) && !atJunction(b[3])) for (const side of [-1, 1])
@@ -189,11 +234,28 @@ function createChunk(data) {
           }
         }
         pavementGeo.push(ribbon(a, b, width + 4, 0.025, "#b4bdb8"));
-        roadGeo.push(ribbon(a, b, width, 0.065, "#48575b"));
+        (underground ? tunnelRoadGeo : roadGeo).push(
+          ribbon(a, b, width, 0.065, underground ? "#252d31" : "#48575b"),
+        );
+        addTunnelPortal(a, b, width, portalGeo, portalInsetGeo);
         const interpolate = (t) => a.map((v, j) => v + (b[j] - v) * t);
         const lanes = props.laneLayout;
         const dividers = lanes?.total > 1 ? Array.from({ length: lanes.total - 1 }, (_, n) =>
           (n + 1 - lanes.total / 2) * width / lanes.total) : [];
+        if (
+          underground &&
+          Math.floor(a[3] / 22) !== Math.floor(b[3] / 22)
+        ) {
+          const distance = Math.ceil(a[3] / 22) * 22,
+            light = interpolate(clamp((distance - a[3]) / (b[3] - a[3]), 0, 1)),
+            yaw = Math.atan2(b[0] - a[0], b[1] - a[1]),
+            ceiling = light[2] + 3.35;
+          tunnelLightGeo.push(orientedBox(1.35, 0.12, 0.34,
+            light[0], ceiling, light[1], yaw));
+          tunnelGlowGeo.push(downGlow(
+            light[0], ceiling - 0.05, light[1], 2.5, 3.15,
+          ));
+        }
         for (const lateral of dividers) for (let d = Math.floor(a[3] / 13) * 13; d < b[3]; d += 13) {
           const lo = Math.max(d, a[3]), hi = Math.min(d + 5, b[3]);
           if (hi > lo && !atJunction(lo) && !atJunction(hi)) markGeo.push(ribbon(
@@ -215,6 +277,7 @@ function createChunk(data) {
           const arm = new THREE.BoxGeometry(2.6, 0.12, 0.12); arm.rotateY(angle); arm.translate(x + rx * 1.3, p[2] + 7.9, z + rz * 1.3); lampGeo.push(arm);
           const head = new THREE.BoxGeometry(0.7, 0.14, 0.3); head.rotateY(angle); head.translate(x + rx * 2.45, p[2] + 7.82, z + rz * 2.45); lampHeadGeo.push(head);
           lampPoints.push([x + rx * 2.45, p[2] + 7.75, z + rz * 2.45]);
+          lampGlowGeo.push(downGlow(x + rx * 2.45, p[2] + 7.7, z + rz * 2.45, 2.8, 6.4));
         }
         if (lanes?.total > 1 && !segment.tunnel) for (let d = Math.ceil((a[3] + 0.01) / 45) * 45; d < b[3] - 0.01; d += 45) {
           if (atJunction(d)) continue;
@@ -285,9 +348,15 @@ function createChunk(data) {
   mergeInto(group, bridgeGeo, worldMaterials.bridge);
   mergeInto(group, tunnelGeo, worldMaterials.tunnel);
   mergeInto(group, roadGeo.filter(Boolean), worldMaterials.road);
+  mergeInto(group, tunnelRoadGeo.filter(Boolean), worldMaterials.tunnelRoad);
   mergeInto(group, markGeo.filter(Boolean), worldMaterials.mark);
   mergeInto(group, lampGeo, worldMaterials.lamp);
   mergeInto(group, lampHeadGeo, worldMaterials.lampHead);
+  mergeInto(group, lampGlowGeo, worldMaterials.lampGlow);
+  mergeInto(group, portalGeo, worldMaterials.tunnelPortal);
+  mergeInto(group, portalInsetGeo, worldMaterials.tunnelInset);
+  mergeInto(group, tunnelLightGeo, worldMaterials.lampHead);
+  mergeInto(group, tunnelGlowGeo, worldMaterials.tunnelGlow);
   mergeInto(group, buildingGeo, worldMaterials.building, true);
   group.userData = { segments, blocks, lamps: lampPoints };
   return group;
@@ -662,6 +731,7 @@ function setPaused(value) {
     .querySelectorAll("[data-key]")
     .forEach((b) => b.classList.remove("active"));
   $("pause").textContent = paused ? "▷" : "Ⅱ";
+  $("pause").dataset.label = paused ? "Resume" : "Pause";
   $("pause").setAttribute(
     "aria-label",
     paused ? "Resume driving" : "Pause driving",
@@ -672,9 +742,30 @@ function setPaused(value) {
 function setHudHidden(value) {
   document.documentElement.classList.toggle("hud-hidden", value);
   $("hud-toggle").textContent = value ? "👁️" : "🙈";
+  $("hud-toggle").dataset.label = value ? "Show interface" : "Hide interface";
   $("hud-toggle").setAttribute(
     "aria-label",
     value ? "Show driving interface" : "Hide driving interface",
+  );
+}
+function toggleView() {
+  firstPerson = !firstPerson;
+  $("view-toggle").dataset.label = firstPerson ? "Chase view" : "Driver view";
+  $("view-toggle").setAttribute(
+    "aria-label",
+    firstPerson ? "Switch to chase view" : "Switch to driver view",
+  );
+  toast(firstPerson ? "Driver view" : "Chase view");
+}
+function setActionsCollapsed(value) {
+  const actions = document.querySelector(".top-actions"),
+    button = $("actions-toggle");
+  actions.classList.toggle("actions-collapsed", value);
+  button.textContent = value ? "☰" : "×";
+  button.setAttribute("aria-expanded", String(!value));
+  button.setAttribute(
+    "aria-label",
+    value ? "Open driving controls" : "Close driving controls",
   );
 }
 function setMinimapCollapsed(value) {
@@ -709,10 +800,7 @@ function bindControls() {
       if (!paused) keys.add(e.code);
     }
     if (!e.repeat && e.code === "KeyR" && ready) resetCar();
-    if (!e.repeat && e.code === "KeyV" && ready) {
-      firstPerson = !firstPerson;
-      toast(firstPerson ? "Driver view" : "Chase view");
-    }
+    if (!e.repeat && e.code === "KeyV" && ready) toggleView();
     if (!e.repeat && e.code === "Escape" && ready) setPaused(!paused);
   });
   window.addEventListener("keyup", (e) => keys.delete(e.code));
@@ -748,6 +836,10 @@ function bindControls() {
   $("close-info").onclick = $("resume").onclick = () => $("info").close();
   $("info").addEventListener("close", () => setPaused(wasPausedBeforeInfo));
   $("spawn-picker").onclick = openSpawnPicker;
+  $("view-toggle").onclick = toggleView;
+  $("actions-toggle").onclick = () =>
+    setActionsCollapsed(!document.querySelector(".top-actions").classList.contains("actions-collapsed"));
+  setActionsCollapsed(matchMedia("(max-width: 760px)").matches);
   $("minimap").onclick = openSpawnPicker;
   $("minimap-toggle").onclick = () =>
     setMinimapCollapsed(!document.querySelector(".map-panel").classList.contains("collapsed"));
@@ -991,6 +1083,12 @@ async function init() {
       roughness: 1,
       side: THREE.DoubleSide,
     });
+    worldMaterials.tunnelRoad = new THREE.MeshStandardMaterial({
+      polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
+      vertexColors: true,
+      roughness: 0.86,
+      side: THREE.DoubleSide,
+    });
     worldMaterials.pavement = new THREE.MeshStandardMaterial({
       vertexColors: true,
       roughness: 1,
@@ -1005,13 +1103,43 @@ async function init() {
       roughness: 1,
       side: THREE.DoubleSide,
     });
+    worldMaterials.tunnelPortal = new THREE.MeshStandardMaterial({
+      color: "#697477",
+      roughness: 0.96,
+      metalness: 0.02,
+    });
+    worldMaterials.tunnelInset = new THREE.MeshStandardMaterial({
+      color: "#20292d",
+      roughness: 0.82,
+    });
+    worldMaterials.lampGlow = new THREE.MeshBasicMaterial({
+      color: "#ffe6a0",
+      transparent: true,
+      opacity: 0.045,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+    });
+    worldMaterials.tunnelGlow = new THREE.MeshBasicMaterial({
+      color: "#ffe3a0",
+      transparent: true,
+      opacity: 0.18,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+    });
     worldMaterials.mark = new THREE.MeshBasicMaterial({
       polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
       vertexColors: true,
       side: THREE.DoubleSide,
     });
     worldMaterials.lamp = new THREE.MeshStandardMaterial({ color: "#808080", roughness: 0.65 });
-    worldMaterials.lampHead = new THREE.MeshBasicMaterial({ color: "#fff0b0" });
+    worldMaterials.lampHead = new THREE.MeshStandardMaterial({
+      color: "#fff0b0",
+      emissive: "#ffd36a",
+      emissiveIntensity: 0.35,
+      roughness: 0.3,
+    });
     worldMaterials.building = new THREE.MeshStandardMaterial({
       vertexColors: true,
       roughness: 0.77,
