@@ -94,9 +94,12 @@ function setNight(value) {
   sunLight.intensity = night ? 0.45 : 3;
   worldMaterials.water?.color.set(night ? "#173d65" : "#4f939a");
   if (worldMaterials.lampGlow)
-    worldMaterials.lampGlow.opacity = night ? 0.3 : 0.055;
-  if (worldMaterials.lampHead)
-    worldMaterials.lampHead.emissiveIntensity = night ? 2.6 : 0.35;
+    worldMaterials.lampGlow.opacity = night ? 0.3 : 0;
+  if (worldMaterials.lampHead) {
+    worldMaterials.lampHead.emissiveIntensity = night ? 2.6 : 0;
+    worldMaterials.lampHead.color.set(night ? "#fff0b0" : "#879393");
+  }
+  updateNightLights();
 }
 async function json(url) {
   const response = await fetch(url);
@@ -137,26 +140,24 @@ function lightPool(x, y, z, radius) {
   return geometry;
 }
 function addTunnelPortal(a, b, width, frames, insets) {
-  const threshold = -0.3;
-  if ((a[2] - threshold) * (b[2] - threshold) > 0 || a[2] === b[2]) return;
-  const t = clamp((threshold - a[2]) / (b[2] - a[2]), 0, 1),
-    x = a[0] + (b[0] - a[0]) * t,
+  // Frame the covered mouth, not the start of the open approach trench.
+  const threshold = -3.85;
+  const t = (threshold - a[2]) / (b[2] - a[2]);
+  if (!(t > 0 && t <= 1)) return;
+  const x = a[0] + (b[0] - a[0]) * t,
     z = a[1] + (b[1] - a[1]) * t,
-    dx = b[0] - a[0],
-    dz = b[1] - a[1],
-    length = Math.hypot(dx, dz) || 1,
-    nx = -dz / length,
-    nz = dx / length,
-    yaw = Math.atan2(dx, dz),
-    side = width / 2 + 0.85,
-    base = threshold;
-  for (const direction of [-1, 1])
-    frames.push(orientedBox(1.35, 4.8, 2.6,
-      x + nx * side * direction, base + 2.4, z + nz * side * direction, yaw));
-  frames.push(orientedBox(width + 3.05, 1.25, 2.6,
-    x, base + 4.45, z, yaw));
-  insets.push(orientedBox(width + 1.1, 0.22, 2.72,
-    x, base + 3.72, z, yaw));
+    yaw = Math.atan2(b[0] - a[0], b[1] - a[1]),
+    nx = Math.cos(yaw), nz = -Math.sin(yaw), side = width / 2 + 0.85;
+  for (const direction of [-1, 1]) {
+    frames.push(orientedBox(0.6, 3.5, 1.4,
+      x + nx * side * direction, threshold + 1.75, z + nz * side * direction, yaw));
+    // Recessed vertical bands give the mouth a readable concrete reveal.
+    insets.push(orientedBox(0.12, 2.8, 1.44,
+      x + nx * (side - 0.15) * direction, threshold + 1.5,
+      z + nz * (side - 0.15) * direction, yaw));
+  }
+  frames.push(orientedBox(width + 2.3, 0.25, 1.4, x, threshold + 3.62, z, yaw));
+  insets.push(orientedBox(width + 1.1, 0.08, 1.44, x, threshold + 3.46, z, yaw));
 }
 function createChunk(data) {
   const group = new THREE.Group(),
@@ -230,6 +231,7 @@ function createChunk(data) {
       for (let i = 0; i < pts.length - 1; i++) {
         const a = pts[i], b = pts[i + 1], len = Math.hypot(b[0] - a[0], b[1] - a[1]);
         if (len < 0.01) continue;
+        const layout = props.layout?.[i] || {};
         const segment = { a, b, width, y: a[2], id: f.id + ":" + i,
           name: props.name || "Local road", oneway: props.oneway,
           source: props.sourceId || String(f.id).replace(/-\d+-\d+$/, ""), featureId: f.id,
@@ -237,25 +239,27 @@ function createChunk(data) {
           highway: props.highway, laneLayout: props.laneLayout,
           tunnel: Math.min(a[2], b[2]) < -0.3 };
         segments.push(segment);
-        if (segment.tunnel) tunnelGeo.push(tunnelPassage(a, b, width + 2));
+        if (segment.tunnel) tunnelGeo.push(tunnelPassage(a, b, width + 2, 3.5, layout));
         const elevated = Math.max(a[2], b[2]) > 0.3,
           underground = Math.min(a[2], b[2]) < -0.3;
         if (elevated) {
-          bridgeGeo.push(deck(a, b, width + 4));
-          if (!atJunction(a[3]) && !atJunction(b[3])) for (const side of [-1, 1])
-            bridgeGeo.push(deck(a, b, 0.16, 0.01, 0.81, side * (width / 2 + 1.7)));
-          if (Math.floor(a[3] / 40) !== Math.floor(b[3] / 40)) {
+          bridgeGeo.push(deck(a, b, width + 1.4));
+          if (!atJunction(a[3]) && !atJunction(b[3])) for (const side of [-1, 1]) {
+            if (layout[side === -1 ? "right" : "left"]) continue;
+            bridgeGeo.push(deck(a, b, 0.16, 0.01, 0.81, side * (width / 2 + 0.6)));
+          }
+          if (!layout.noPier && Math.floor(a[3] / 40) !== Math.floor(b[3] / 40)) {
             const h = Math.max(0.1, (a[2] + b[2]) / 2 - 0.7);
             const pier = new THREE.BoxGeometry(1.3, h, 1.3);
             pier.translate((a[0] + b[0]) / 2, h / 2, (a[1] + b[1]) / 2);
             bridgeGeo.push(pier);
           }
         }
-        pavementGeo.push(ribbon(a, b, width + 4, 0.025, "#b4bdb8"));
+        pavementGeo.push(ribbon(a, b, width + 1.4, 0.025, "#b4bdb8"));
         (underground ? tunnelRoadGeo : roadGeo).push(
           ribbon(a, b, width, 0.065, underground ? "#252d31" : "#48575b"),
         );
-        addTunnelPortal(a, b, width, portalGeo, portalInsetGeo);
+        if (!layout.junction) addTunnelPortal(a, b, width, portalGeo, portalInsetGeo);
         const interpolate = (t) => a.map((v, j) => v + (b[j] - v) * t);
         const lanes = props.laneLayout;
         const dividers = lanes?.total > 1 ? Array.from({ length: lanes.total - 1 }, (_, n) =>
@@ -277,14 +281,16 @@ function createChunk(data) {
         }
         for (const lateral of dividers) for (let d = Math.floor(a[3] / 13) * 13; d < b[3]; d += 13) {
           const lo = Math.max(d, a[3]), hi = Math.min(d + 5, b[3]);
-          if (hi > lo && !atJunction(lo) && !atJunction(hi)) markGeo.push(ribbon(
+          if (!layout.junction && hi > lo && !atJunction(lo) && !atJunction(hi)) markGeo.push(ribbon(
             interpolate((lo - a[3]) / (b[3] - a[3])),
             interpolate((hi - a[3]) / (b[3] - a[3])), 0.16, 0.09, "#e7e8d6", lateral));
         }
-        if (!atJunction(a[3]) && !atJunction(b[3])) for (const side of [-1, 1])
-          markGeo.push(ribbon(a, b, 0.12, 0.09, "#d3c990", side * (width / 2 - 0.65)));
+        if (!atJunction(a[3]) && !atJunction(b[3])) for (const side of [-1, 1]) {
+          if (layout[side === -1 ? "right" : "left"]) continue;
+          markGeo.push(ribbon(a, b, 0.12, 0.09, "#d3c990", side * (width / 2 - 0.3)));
+        }
         const spacing = { motorway: 50, trunk: 45, primary: 45 }[props.highway] || 40;
-        if (!segment.tunnel) for (let d = Math.ceil((a[3] + 0.01) / spacing) * spacing; d < b[3] - 0.01; d += spacing) {
+        if (!segment.tunnel && !layout.noLamps) for (let d = Math.ceil((a[3] + 0.01) / spacing) * spacing; d < b[3] - 0.01; d += spacing) {
           if (atJunction(d)) continue;
           const t = (d - a[3]) / (b[3] - a[3]), p = interpolate(t), side = Math.floor(d / spacing) % 2 ? 1 : -1;
           const x = p[0] + p[4] * side * (width / 2 + 1.5), z = p[1] + p[5] * side * (width / 2 + 1.5);
@@ -299,7 +305,7 @@ function createChunk(data) {
           lampGlowGeo.push(lightPool(x + rx * 2.45, p[2], z + rz * 2.45, 5));
           lampGlowGeo.push(downGlow(x + rx * 2.45, p[2] + 7.7, z + rz * 2.45, 2.8, 6.4));
         }
-        if (lanes?.total > 1 && !segment.tunnel) for (let d = Math.ceil((a[3] + 0.01) / 45) * 45; d < b[3] - 0.01; d += 45) {
+        if (lanes?.total > 1 && !segment.tunnel && !layout.junction) for (let d = Math.ceil((a[3] + 0.01) / 45) * 45; d < b[3] - 0.01; d += 45) {
           if (atJunction(d)) continue;
           const p = interpolate((d - a[3]) / (b[3] - a[3])), laneWidth = width / lanes.total;
           const arrow = (lateral, direction) => {
@@ -1142,7 +1148,7 @@ async function init() {
     worldMaterials.lampGlow = new THREE.MeshBasicMaterial({
       color: "#ffe6a0",
       transparent: true,
-      opacity: 0.055,
+      opacity: 0,
       vertexColors: true,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
@@ -1166,7 +1172,7 @@ async function init() {
     worldMaterials.lampHead = new THREE.MeshStandardMaterial({
       color: "#fff0b0",
       emissive: "#ffd36a",
-      emissiveIntensity: 0.35,
+      emissiveIntensity: 0,
       roughness: 0.3,
     });
     worldMaterials.building = new THREE.MeshStandardMaterial({

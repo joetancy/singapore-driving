@@ -12,9 +12,14 @@ export const nominalHeight = (p) => {
 };
 const count = (value) => Number.isInteger(Number(value)) && Number(value) > 0 ? Number(value) : 0;
 export function roadWidth(properties = {}) {
-  const fallback = { motorway: 18, trunk: 18, primary: 16, secondary: 14,
-    tertiary: 11, residential: 9, service: 6 }[properties.highway] || 10;
-  return Math.max(4, Math.min(32, parseFloat(properties.width) || fallback));
+  const explicit = parseFloat(properties.width);
+  if (explicit > 0) return Math.max(4, Math.min(32, explicit));
+  const lanes = count(properties.lanes) ||
+    count(properties["lanes:forward"]) + count(properties["lanes:backward"]);
+  const link = /_link$/.test(properties.highway || "");
+  const fast = /^(motorway|trunk)/.test(properties.highway || "");
+  const fallback = link ? 1 : fast ? 3 : properties.highway === "service" ? 1 : 2;
+  return Math.max(4, Math.min(32, (lanes || fallback) * (fast ? 3.5 : 3.1) + (fast ? 1 : 0.6)));
 }
 // OSM ways are drawn in their recorded direction. Singapore traffic keeps left.
 export function laneLayout(properties = {}) {
@@ -24,7 +29,7 @@ export function laneLayout(properties = {}) {
   const reverse = properties.oneway === "-1";
   let forward = count(properties["lanes:forward"]), backward = count(properties["lanes:backward"]);
   const total = count(properties.lanes);
-  if (oneWay) forward ||= total || Math.max(1, Math.round(roadWidth(properties) / 3.2));
+  if (oneWay) forward ||= total || Math.max(1, Math.round((roadWidth(properties) - 0.6) / 3.5));
   else if (!forward && !backward) {
     forward = total ? Math.ceil(total / 2) : 1;
     backward = total ? Math.floor(total / 2) : 1;
@@ -39,7 +44,7 @@ export function laneLayout(properties = {}) {
   if (properties.lanes && !total) warnings.push("invalid lanes");
   if (properties["lanes:forward"] && !count(properties["lanes:forward"])) warnings.push("invalid lanes:forward");
   if (properties["lanes:backward"] && !count(properties["lanes:backward"])) warnings.push("invalid lanes:backward");
-  const fallback = total || forward || Math.max(1, Math.round(roadWidth(properties) / 3.2));
+  const fallback = total || forward || Math.max(1, Math.round((roadWidth(properties) - 0.6) / 3.5));
   const result = { forward: reverse ? 0 : forward, backward: reverse ? fallback : backward,
     oneWay: oneWay || reverse, reverse, total: reverse ? fallback : forward + backward,
     turnLanes: properties["turn:lanes"] || "", maxspeed: properties.maxspeed || "" };
@@ -95,7 +100,7 @@ export function prepareRoads(features, center) {
     const matches = (sameLevel.length ? sameLevel : alternatives).map((other) => {
       const end = other.a === n ? other.b : other.a;
       return { other, score: -(ux * (end.p[0] - n.p[0]) + uz * (end.p[1] - n.p[1])) / other.length };
-    }).filter(({ score }) => score >= Math.cos(Math.PI / 6)).sort((a, b) => b.score - a.score);
+    }).filter(({ score }) => score >= (n.edges.length === 2 ? -0.5 : Math.cos(Math.PI / 6))).sort((a, b) => b.score - a.score);
     return matches.length && (matches.length === 1 || matches[0].score - matches[1].score >= 0.03) ? matches[0].other : null;
   };
   // A bridge or tunnel may pull only one near-straight continuation toward its
@@ -104,20 +109,27 @@ export function prepareRoads(features, center) {
   const queue = edges.filter((e) => Math.abs(e.h) > 0.00001)
     .flatMap((e) => [[e, e.a], [e, e.b]]);
   for (let i = 0; i < queue.length; i++) {
-    const [e, n] = queue[i], next = continuation(e, n);
-    if (!next) continue;
-    const far = next.a === n ? next.b : next.a;
-    const nearHeight = heightAt(e, n);
-    const direction = Math.sign(nearHeight - next.h);
-    if (!direction) continue;
-    if (direction * (nearHeight - heightAt(next, n)) > 0.00001)
-      setHeight(next, n, nearHeight);
-    const farHeight = direction > 0
-      ? Math.max(next.h, nearHeight - next.length * maxGrade)
-      : Math.min(next.h, nearHeight + next.length * maxGrade);
-    if (direction * (farHeight - heightAt(next, far)) > 0.00001) {
-      setHeight(next, far, farHeight);
-      queue.push([next, far]);
+    const [e, n] = queue[i];
+    // Explicit slip roads connect to the mainline even when a same-level
+    // mainline continuation exists or the slip road bends away sharply.
+    const ramps = n.edges.filter(other => other !== e &&
+      /^(motorway|trunk)_link$/.test(other.f.properties.highway || "") &&
+      other.h !== e.h && n.id.startsWith("osm:"));
+    const targets = new Set([continuation(e, n), ...ramps].filter(Boolean));
+    for (const next of targets) {
+      const far = next.a === n ? next.b : next.a;
+      const nearHeight = heightAt(e, n);
+      const direction = Math.sign(nearHeight - next.h);
+      if (!direction) continue;
+      if (direction * (nearHeight - heightAt(next, n)) > 0.00001)
+        setHeight(next, n, nearHeight);
+      const farHeight = direction > 0
+        ? Math.max(next.h, nearHeight - next.length * maxGrade)
+        : Math.min(next.h, nearHeight + next.length * maxGrade);
+      if (direction * (farHeight - heightAt(next, far)) > 0.00001) {
+        setHeight(next, far, farHeight);
+        queue.push([next, far]);
+      }
     }
   }
   const result = new Map(features.map((f) => [f.id, []]));
@@ -133,7 +145,11 @@ export function prepareRoads(features, center) {
     list.sort((a, b) => String(a.f.id).localeCompare(String(b.f.id), undefined, { numeric: true }));
     let distance = 0;
     for (const e of list) {
-      const neighbor = (n) => n.edges.length === 2 ? n.edges.find((q) => q !== e && q.source === e.source) : null;
+      const neighbor = (n) => {
+        if (n.edges.length !== 2) return null;
+        const other = n.edges.find(q => q !== e);
+        return other && Math.abs(heightAt(other, n) - heightAt(e, n)) < 0.01 ? other : null;
+      };
       const previous = neighbor(e.a), next = neighbor(e.b);
       // Keep every shared endpoint exact. The cross section uses averaged
       // tangents below, so ribbons remain joined without visible gaps.
@@ -141,7 +157,16 @@ export function prepareRoads(features, center) {
       const positions = [a];
       const count = Math.max(1, Math.ceil(length(a, b) / 8));
       for (let i = 1; i < count; i++) positions.push(mix(a, b, i / count));
+      // Exact cover and ground thresholds keep ramp walls, portal frames,
+      // terrain openings and tunnel roofs aligned at the same cross section.
+      for (const level of [-3.85, -0.3]) {
+        const t = (level - a[2]) / (b[2] - a[2]);
+        if (t > 0 && t < 1) positions.push(mix(a, b, t));
+      }
       positions.push(b);
+      positions.sort((p, q) => length(a, p) - length(a, q));
+      for (let i = positions.length - 1; i > 0; i--)
+        if (length(positions[i], positions[i - 1]) < 0.00001) positions.splice(i, 1);
       const arc = positions.map((p, i) => i ? length(positions[i - 1], p) : 0);
       const total = arc.reduce((sum, v) => sum + v, 0);
       let progress = 0;
@@ -161,7 +186,12 @@ export function prepareRoads(features, center) {
           dz = (e.b.p[1] - e.a.p[1]) / e.length + sign * (n.p[1] - far.p[1]) / adjacent.length;
         }
         const l = Math.hypot(dx, dz) || 1;
-        samples[i].push(-dz / l, dx / l);
+        const ownX = (e.b.p[0] - e.a.p[0]) / e.length;
+        const ownZ = (e.b.p[1] - e.a.p[1]) / e.length;
+        // A bounded miter meets both road edges; unit averaged normals shrink
+        // the join and produce wedges at corners. Cap sharp turns safely.
+        const miter = Math.min(2, 1 / Math.max(0.5, (dx * ownX + dz * ownZ) / l));
+        samples[i].push(-dz / l * miter, dx / l * miter);
       }
       result.get(e.f.id).push(...samples);
     }
