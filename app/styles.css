@@ -990,3 +990,20 @@ dd {
   }
   .top-actions .view-button { min-width: 128px; }
 }
+
+/* Keep these rules after mobile panel defaults so night mode wins. */
+.night .top-actions .action-items {
+  background: #10212ef5;
+  border-color: #426075;
+  color: #edf5ff;
+  box-shadow: 0 12px 36px #0008;
+}
+.night .top-actions .action-items .icon-button {
+  background: #1b3444;
+  color: #edf5ff;
+  border-color: #4b687a;
+}
+.night .top-actions .action-items .icon-button:hover,
+.night .top-actions .action-items .icon-button[aria-pressed="true"] {
+  background: #285365;
+}

@@ -33,7 +33,7 @@ for (const c of chunks) {
     f.properties.layout = layout.segments.get(f.id);
     f.properties.connections = prepared.connections.get(f.id);
     f.properties.sourceId = String(f.id).replace(/-\d+-\d+$/, "");
-    f.properties.width = roadWidth(f.properties);
+    f.properties.width = layout.widths.get(f.properties.sourceId) ?? roadWidth(f.properties);
     f.properties.laneLayout = laneLayout(f.properties);
     const road = { id: f.id, name: f.properties.name || "Local road", highway: f.properties.highway,
       width: f.properties.width, laneLayout: f.properties.laneLayout,
@@ -50,7 +50,7 @@ for (const c of chunks) {
 }
 writeFileSync(resolve(output, "data/map/overview.json"), JSON.stringify(overview));
 writeFileSync(resolve(output, "data/road-warnings.json"), JSON.stringify(prepared.warnings));
-manifest.roadVersion = 5;
+manifest.roadVersion = 6;
 writeFileSync(manifestPath, JSON.stringify(manifest));
 console.log(`Prepared ${roadFeatures.length} road segments; ${prepared.warnings.length} mixed-level junctions flagged for inspection.`);
 

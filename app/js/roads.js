@@ -1,6 +1,24 @@
 import { nearestPoint } from "./physics.js";
 
 export const sampleHeight = (r, t) => r.a[2] + (r.b[2] - r.a[2]) * t;
+
+// Lost lateral contact must not turn an underground car into a ground-level
+// car. Slide along the last tunnel surface; keep speed and steering unchanged.
+export function drivingContact(index, state, active, height) {
+  const contact = surfaceAt(index, state.x, state.z, active, height);
+  if (contact || !active?.tunnel) return contact;
+  const p = nearestPoint(state.x, state.z, active.a, active.b);
+  const dx = state.x - p.x, dz = state.z - p.z;
+  const radius = Math.max(0, active.width / 2 - 1.1);
+  const scale = p.d > radius ? radius / p.d : 1;
+  // At an unloaded or disconnected end, retain the last supported section.
+  const ex = active.b[0] - active.a[0], ez = active.b[1] - active.a[1];
+  const length = Math.hypot(ex, ez) || 1;
+  const lateral = Math.max(-radius, Math.min(radius, (-ez * dx + ex * dz) / length));
+  state.x = p.t === 0 || p.t === 1 ? p.x - ez / length * lateral : p.x + dx * scale;
+  state.z = p.t === 0 || p.t === 1 ? p.z + ex / length * lateral : p.z + dz * scale;
+  return { ...active, ...p, d: Math.min(p.d, radius), y: sampleHeight(active, p.t) };
+}
 const nodeKey = (p) => p.slice(0, 3).map((v) => v.toFixed(3)).join(",");
 
 export function roadIndex(roads) {
