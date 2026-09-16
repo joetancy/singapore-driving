@@ -54,7 +54,7 @@ manifest.roadVersion = 6;
 writeFileSync(manifestPath, JSON.stringify(manifest));
 console.log(`Prepared ${roadFeatures.length} road segments; ${prepared.warnings.length} mixed-level junctions flagged for inspection.`);
 
-for (const file of ["app.js", "geometry.js"]) {
+for (const file of ["app.js", "geometry.js", "traffic.js"]) {
   const target = resolve(output, "js", file);
   writeFileSync(
     target,

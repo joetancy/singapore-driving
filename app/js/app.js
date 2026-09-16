@@ -9,7 +9,8 @@ import {
   quad,
   tunnelPassage,
 } from "./geometry.js";
-import { loadPreferences, saveNight, saveSpawn } from "./storage.js";
+import { loadPreferences, saveNight, saveSpawn, loadTraffic, saveTraffic } from "./storage.js";
+import { createTraffic } from "./traffic.js";
 import { roadIndex, surfaceAt, sampleHeight, drivingContact } from "./roads.js";
 import { createSpawnPicker } from "./spawn-map.js";
 import {
@@ -423,6 +424,7 @@ function rebuildCollisionLists() {
   }
   updateMinimapRoads();
   surfaces = roadIndex(roads);
+  traffic?.syncRoads(roads);
   updateTunnelOpenings();
   updateNightLights();
 }
@@ -703,6 +705,7 @@ function blocked(x, z, y, road = null) {
   return false;
 }
 function resetCar(announce = true) {
+  traffic?.clear();
   const p = point(manifest.spawn),
     q = point(manifest.spawnTarget);
   state = {
@@ -755,7 +758,7 @@ function clearDrivingInput() {
 }
 function setHudHidden(value) {
   document.documentElement.classList.toggle("hud-hidden", value);
-  $("hud-toggle").textContent = value ? "👁️" : "🙈";
+  $("hud-toggle").querySelector(".hud-label").textContent = value ? "Show driving interface" : "Hide driving interface";
   $("hud-toggle").dataset.label = value ? "Show interface" : "Hide interface";
   $("hud-toggle").setAttribute(
     "aria-label",
@@ -773,17 +776,7 @@ function toggleView() {
   );
   toast(firstPerson ? "Driver view" : "Chase view");
 }
-function setActionsCollapsed(value) {
-  const actions = document.querySelector(".top-actions"),
-    button = $("actions-toggle");
-  actions.classList.toggle("actions-collapsed", value);
-  button.textContent = value ? "☰" : "×";
-  button.setAttribute("aria-expanded", String(!value));
-  button.setAttribute(
-    "aria-label",
-    value ? "Open driving controls" : "Close driving controls",
-  );
-}
+let traffic;
 function setMinimapCollapsed(value) {
   const panel = document.querySelector(".map-panel"),
     button = $("minimap-toggle");
@@ -810,7 +803,7 @@ function bindControls() {
       ["Space", "Enter"].includes(e.code)
     )
       return;
-    if ($("info").open || $("spawn-dialog").open) return;
+    if ($("info").open || $("spawn-dialog").open || $("settings").open) return;
     if (valid.includes(e.code)) {
       e.preventDefault();
       keys.add(e.code);
@@ -843,15 +836,22 @@ function bindControls() {
     if (ready) resetCar();
   };
   $("help").onclick = () => {
+    $("settings").close();
     clearDrivingInput();
     $("info").showModal();
   };
   $("close-info").onclick = $("back-to-road").onclick = () => $("info").close();
-  $("spawn-picker").onclick = openSpawnPicker;
+  $("spawn-picker").onclick = () => { $("settings").close(); openSpawnPicker(); };
   $("view-toggle").onclick = toggleView;
-  $("actions-toggle").onclick = () =>
-    setActionsCollapsed(!document.querySelector(".top-actions").classList.contains("actions-collapsed"));
-  setActionsCollapsed(matchMedia("(max-width: 760px)").matches);
+  $("open-settings").onclick = () => { clearDrivingInput(); $("settings").showModal(); };
+  $("close-settings").onclick = $("settings-done").onclick = () => $("settings").close();
+  const setDensity = (value) => {
+    $("traffic-density").value = value;
+    $("traffic-value").textContent = Number(value) === 0 ? "Off" : `${value}%`;
+    traffic?.density(value);
+  };
+  setDensity(loadTraffic());
+  $("traffic-density").oninput = e => { setDensity(e.target.value); saveTraffic(e.target.value); };
   $("minimap").onclick = openSpawnPicker;
   $("minimap-toggle").onclick = () =>
     setMinimapCollapsed(!document.querySelector(".map-panel").classList.contains("collapsed"));
@@ -964,6 +964,7 @@ function animate() {
         smoothGround = contact?.y ?? 0;
       }
       distance += Math.hypot(state.x - oldX, state.z - oldZ) / 1000;
+      traffic?.step(dt / steps, state, smoothGround);
     }
   }
   car.position.set(state.x, smoothGround + 0.08, state.z);
@@ -1224,6 +1225,9 @@ async function init() {
     $("loading-message").textContent = "Loading the neighbourhood…";
     await streamChunks(true);
     car = createCar();
+    traffic = createTraffic(scene);
+    traffic.syncRoads(roads);
+    traffic.density(loadTraffic());
     setupMinimap();
     resetCar(false);
     setNight(night);
