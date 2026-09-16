@@ -2,6 +2,8 @@ import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path";
 import { prepareRoads, roadVisible, laneLayout, roadWidth } from "./road-network.mjs";
 
+import { prepareLayout } from "./road-layout.mjs";
+
 const root = resolve(import.meta.dirname, "..");
 const output = resolve(root, "dist");
 
@@ -17,6 +19,8 @@ const chunks = manifest.chunks.map((c) => ({
 }));
 const roadFeatures = chunks.flatMap((c) => c.data.features.filter((f) => f.geometry.type === "LineString"));
 const prepared = prepareRoads(roadFeatures, manifest.center);
+const layout = prepareLayout(roadFeatures, prepared.samples);
+console.log(`Suppressed street lamps on ${layout.overlaps} overlapping road samples.`);
 const overview = [];
 mkdirSync(resolve(output, "data/map"), { recursive: true });
 for (const c of chunks) {
@@ -26,6 +30,7 @@ for (const c of chunks) {
     f.properties.roadVisible = roadVisible(f.properties);
     if (!f.properties.roadVisible) continue;
     f.properties.samples = prepared.samples.get(f.id).map((p) => p.map((v, i) => Number(v.toFixed(i === 2 || i >= 4 ? 6 : 3))));
+    f.properties.layout = layout.segments.get(f.id);
     f.properties.connections = prepared.connections.get(f.id);
     f.properties.sourceId = String(f.id).replace(/-\d+-\d+$/, "");
     f.properties.width = roadWidth(f.properties);
@@ -45,7 +50,7 @@ for (const c of chunks) {
 }
 writeFileSync(resolve(output, "data/map/overview.json"), JSON.stringify(overview));
 writeFileSync(resolve(output, "data/road-warnings.json"), JSON.stringify(prepared.warnings));
-manifest.roadVersion = 4;
+manifest.roadVersion = 5;
 writeFileSync(manifestPath, JSON.stringify(manifest));
 console.log(`Prepared ${roadFeatures.length} road segments; ${prepared.warnings.length} mixed-level junctions flagged for inspection.`);
 

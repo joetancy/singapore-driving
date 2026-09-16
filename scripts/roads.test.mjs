@@ -107,3 +107,66 @@ const passage = tunnelPassage([0, 0, -4, 0, 0, 1], [10, 0, -4, 10, 0, 1], 12);
 const positions = passage.attributes.position;
 for (let i = 0; i < positions.count; i++) assert(positions.getY(i) < 0, "Tunnel roof must stay below surface roads");
 passage.dispose();
+
+// Single-lane slip roads must not inherit an oversized multi-lane surface.
+const { roadWidth } = await import('./road-network.mjs');
+assert.equal(roadWidth({ highway: 'motorway_link', lanes: '1' }), 4.5);
+assert.equal(roadWidth({ highway: 'motorway', lanes: '3' }), 11.5);
+assert.equal(roadWidth({ highway: 'motorway_link', width: '6.2', lanes: '1' }), 6.2);
+
+// An explicit off-ramp joins the elevated mainline even at a diverging angle.
+const interchange = prepareRoads([
+  road('main-in', [[103.849, 1.29], junction], { highway: 'motorway', bridge: 'yes', endNodeId: 'ramp-node' }),
+  road('main-out', [junction, [103.851, 1.29]], { highway: 'motorway', bridge: 'yes', startNodeId: 'ramp-node' }),
+  road('off-ramp', [junction, [103.8506, 1.2906]], { highway: 'motorway_link', startNodeId: 'ramp-node' }),
+], center);
+const rampSamples = interchange.samples.get('off-ramp');
+assert.equal(rampSamples[0][2], 4);
+assert.equal(rampSamples.at(-1)[2], 0);
+for (let i = 1; i < rampSamples.length; i++) {
+  const a = rampSamples[i - 1], b = rampSamples[i];
+  assert(Math.abs(b[2] - a[2]) / Math.hypot(b[0] - a[0], b[1] - a[1]) <= 0.08);
+}
+// A bend between separate OSM ways shares a watertight mitered cross section.
+const bend = prepareRoads([
+  road('bend-a', [[103.849, 1.29], junction]),
+  road('bend-b', [junction, [103.8507, 1.2907]]),
+], center);
+const bendA = bend.samples.get('bend-a').at(-1), bendB = bend.samples.get('bend-b')[0];
+assert(Math.abs(bendA[4] - bendB[4]) < 0.001);
+assert(Math.abs(bendA[5] - bendB[5]) < 0.001);
+assert(regression.samples.get('surface-by-tunnel').some(p => Math.abs(p[2] + 3.85) < 0.00001));
+
+const { prepareLayout } = await import('./road-layout.mjs');
+const overlapFeatures = [road('lower', [[0, 0], [1, 1]]), road('upper', [[0, 0], [1, 1]])];
+const overlapSamples = new Map([
+  ['lower', [[-8, 0, 0, 0, 0, 1], [8, 0, 0, 16, 0, 1]]],
+  ['upper', [[0, -8, 4, 0, -1, 0], [0, 8, 4, 16, -1, 0]]],
+]);
+const layout = prepareLayout(overlapFeatures, overlapSamples);
+assert(layout.segments.get('lower')[0].noLamps);
+assert(layout.segments.get('upper')[0].noLamps);
+assert(layout.segments.get('upper')[0].noPier);
+assert(!layout.segments.get('lower')[0].left);
+assert(!layout.segments.get('lower')[0].right);
+const isolated = prepareLayout([overlapFeatures[0]], overlapSamples);
+assert(!isolated.segments.get('lower')[0].noLamps);
+const openPassage = tunnelPassage([0, 0, -4, 0, 0, 1], [10, 0, -4, 10, 0, 1], 12, 3.5, { left: true });
+assert.equal(openPassage.attributes.position.count, 12); // Remaining wall and roof.
+openPassage.dispose();
+console.log('ramp joins, portal thresholds, widths and global overlap checks passed');
+
+// Height propagation must follow a bending slip road, not stop at a 30° turn.
+const bentRamp = prepareRoads([
+  road('ramp-deck', [[103.849, 1.29], junction], { bridge: 'yes', endNodeId: 'curve-start' }),
+  road('curve-1', [junction, [103.8501, 1.29]], { highway: 'motorway_link', startNodeId: 'curve-start', endNodeId: 'curve-bend' }),
+  road('curve-2', [[103.8501, 1.29], [103.8501, 1.291]], { highway: 'motorway_link', startNodeId: 'curve-bend' }),
+], center);
+assert.equal(bentRamp.samples.get('curve-1').at(-1)[2], bentRamp.samples.get('curve-2')[0][2]);
+assert.equal(bentRamp.samples.get('curve-2').at(-1)[2], 0);
+assert.equal(laneLayout({ highway: 'motorway' }).total, 3);
+const duplicates = prepareLayout(overlapFeatures, new Map([
+  ['lower', [[-8, 0, 0, 0, 0, 1], [8, 0, 0, 16, 0, 1]]],
+  ['upper', [[-8, 0, 0, 0, 0, 1], [8, 0, 0, 16, 0, 1]]],
+]));
+assert(duplicates.segments.get('lower')[0].noLamps);
