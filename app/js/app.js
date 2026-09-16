@@ -32,11 +32,8 @@ let renderer,
   car,
   frontWheels = [],
   allWheels = [],
-  paused = false,
   ready = false,
   toastTimer,
-  wasPausedBeforeInfo = false,
-  wasPausedBeforePicker = false,
   firstPerson = false,
   night = false,
   skyLight,
@@ -79,10 +76,10 @@ function setNight(value) {
   document.documentElement.classList.toggle("night", night);
   $("night-toggle").setAttribute(
     "aria-label",
-    night ? "Enable day mode" : "Enable night mode",
+    night ? "Disable dark mode" : "Enable dark mode",
   );
-  $("night-toggle").textContent = night ? "☀️" : "🌙";
-  $("night-toggle").dataset.label = night ? "Day mode" : "Night mode";
+  $("night-toggle").querySelector(".mode-label").textContent = night ? "Dark mode: On" : "Dark mode: Off";
+  $("night-toggle").setAttribute("aria-pressed", String(night));
   saveNight(night);
   if (!scene) return;
   scene.background.set(night ? "#07131f" : "#b2d2d6");
@@ -225,6 +222,7 @@ function createChunk(data) {
       const pts = props.samples;
       if (!pts?.length) throw new Error("Road assets require npm run build");
       const startDistance = pts[0][3], endDistance = pts[pts.length - 1][3];
+      const lampsAllowed = !props.layout?.some(section => section.noLamps || section.junction);
       const atJunction = (d) =>
         (props.connections?.start?.length > 1 && d - startDistance < 14) ||
         (props.connections?.end?.length > 1 && endDistance - d < 14);
@@ -290,7 +288,7 @@ function createChunk(data) {
           markGeo.push(ribbon(a, b, 0.12, 0.09, "#d3c990", side * (width / 2 - 0.3)));
         }
         const spacing = { motorway: 50, trunk: 45, primary: 45 }[props.highway] || 40;
-        if (!segment.tunnel && !layout.noLamps) for (let d = Math.ceil((a[3] + 0.01) / spacing) * spacing; d < b[3] - 0.01; d += spacing) {
+        if (lampsAllowed && !segment.tunnel && !layout.noLamps) for (let d = Math.ceil((a[3] + 0.01) / spacing) * spacing; d < b[3] - 0.01; d += spacing) {
           if (atJunction(d)) continue;
           const t = (d - a[3]) / (b[3] - a[3]), p = interpolate(t), side = Math.floor(d / spacing) % 2 ? 1 : -1;
           const x = p[0] + p[4] * side * (width / 2 + 1.5), z = p[1] + p[5] * side * (width / 2 + 1.5);
@@ -637,8 +635,7 @@ function setupMinimap() {
 let showSpawnMap;
 function openSpawnPicker() {
   if (!ready) return;
-  wasPausedBeforePicker = paused;
-  setPaused(true);
+  clearDrivingInput();
   if (!showSpawnMap) showSpawnMap = createSpawnPicker({
     manifest, project: point, fetchJSON: json,
     onSelect: async (hit) => {
@@ -749,21 +746,12 @@ function resetCar(announce = true) {
   camera.lookAt(lookTarget);
   if (announce) toast("Back on the road");
 }
-function setPaused(value) {
-  paused = value;
+function clearDrivingInput() {
   keys.clear();
   touches.clear();
   document
     .querySelectorAll("[data-key]")
     .forEach((b) => b.classList.remove("active"));
-  $("pause").textContent = paused ? "▷" : "Ⅱ";
-  $("pause").dataset.label = paused ? "Resume" : "Pause";
-  $("pause").setAttribute(
-    "aria-label",
-    paused ? "Resume driving" : "Pause driving",
-  );
-  if (ready)
-    toast(paused ? "Paused — press Esc to resume" : "Back to the road");
 }
 function setHudHidden(value) {
   document.documentElement.classList.toggle("hud-hidden", value);
@@ -825,23 +813,22 @@ function bindControls() {
     if ($("info").open || $("spawn-dialog").open) return;
     if (valid.includes(e.code)) {
       e.preventDefault();
-      if (!paused) keys.add(e.code);
+      keys.add(e.code);
     }
     if (!e.repeat && e.code === "KeyR" && ready) resetCar();
     if (!e.repeat && e.code === "KeyV" && ready) toggleView();
-    if (!e.repeat && e.code === "Escape" && ready) setPaused(!paused);
   });
   window.addEventListener("keyup", (e) => keys.delete(e.code));
   window.addEventListener("blur", () => {
-    if (ready) setPaused(true);
+    clearDrivingInput();
   });
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden && ready) setPaused(true);
+    if (document.hidden) clearDrivingInput();
   });
   document.querySelectorAll("[data-key]").forEach((button) => {
     button.addEventListener("pointerdown", (e) => {
       e.preventDefault();
-      if (paused || !ready) return;
+      if (!ready) return;
       button.setPointerCapture(e.pointerId);
       touches.set(e.pointerId, button.dataset.key);
       button.classList.add("active");
@@ -852,17 +839,14 @@ function bindControls() {
         button.classList.remove("active");
       });
   });
-  $("pause").onclick = () => setPaused(!paused);
   $("reset").onclick = () => {
     if (ready) resetCar();
   };
   $("help").onclick = () => {
-    wasPausedBeforeInfo = paused;
-    setPaused(true);
+    clearDrivingInput();
     $("info").showModal();
   };
-  $("close-info").onclick = $("resume").onclick = () => $("info").close();
-  $("info").addEventListener("close", () => setPaused(wasPausedBeforeInfo));
+  $("close-info").onclick = $("back-to-road").onclick = () => $("info").close();
   $("spawn-picker").onclick = openSpawnPicker;
   $("view-toggle").onclick = toggleView;
   $("actions-toggle").onclick = () =>
@@ -876,9 +860,6 @@ function bindControls() {
   $("hud-toggle").onclick = () =>
     setHudHidden(!document.documentElement.classList.contains("hud-hidden"));
   $("close-spawn").onclick = () => $("spawn-dialog").close();
-  $("spawn-dialog").addEventListener("close", () =>
-    setPaused(wasPausedBeforePicker),
-  );
 }
 function hud() {
   const kmh = Math.round(Math.abs(state.speed) * 3.6);
@@ -893,9 +874,7 @@ function hud() {
   const lateral = nearRoad && ((state.x - nearRoad.x) * -roadDz + (state.z - nearRoad.z) * roadDx) / roadLength;
   const wrongWay = nearRoad?.laneLayout && kmh > 5 && Math.abs(lateral) > 0.5 &&
     (travel * lateral < 0 || (nearRoad.laneLayout.oneWay && travel * (nearRoad.laneLayout.reverse ? -1 : 1) < 0));
-  $("surface").textContent = paused
-    ? "PAUSED"
-    : wrongWay
+  $("surface").textContent = wrongWay
       ? "WRONG WAY"
     : nearRoad && nearRoad.d < nearRoad.width / 2 + 1
       ? firstPerson
@@ -932,7 +911,7 @@ function animate() {
   if (!ready) return;
   const now = performance.now();
   nearRoad = surfaceAt(surfaces, state.x, state.z, activeRoad, smoothGround);
-  if (!paused) {
+  {
     const down = (...codes) =>
       codes.some((c) => keys.has(c) || [...touches.values()].includes(c));
     const input = {
@@ -946,10 +925,8 @@ function animate() {
     for (let i = 0; i < steps; i++) {
       const oldX = state.x,
         oldZ = state.z;
-      const before = surfaceAt(surfaces, oldX, oldZ, activeRoad, smoothGround);
-      stepCar(state, input, dt / steps, !!before);
+      stepCar(state, input, dt / steps);
       const contact = surfaceAt(surfaces, state.x, state.z, activeRoad, smoothGround);
-      const edge = !contact && Math.abs(smoothGround) > 0.3;
       const ll = projection.invert([state.x, state.z]),
         bb = manifest.bounds;
       const outside =
@@ -962,7 +939,7 @@ function animate() {
       const water =
         (!contact || contact.y < 0.1) &&
         waterPolygons.some((r) => inPolygon(state.x, state.z, r));
-      if (edge || outside || water || blocked(
+      if (outside || water || blocked(
         state.x,
         state.z,
         contact?.y ?? smoothGround,
@@ -974,7 +951,7 @@ function animate() {
         if (now - lastHud > 2000) {
           lastHud = now;
           toast(
-            edge ? "Road edge — follow the deck or wait for the next section" : outside
+            outside
               ? "Edge of the available map"
               : water
                 ? "Stay on land — reverse to return"

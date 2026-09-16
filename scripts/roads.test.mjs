@@ -170,3 +170,14 @@ const duplicates = prepareLayout(overlapFeatures, new Map([
   ['upper', [[-8, 0, 0, 0, 0, 1], [8, 0, 0, 16, 0, 1]]],
 ]));
 assert(duplicates.segments.get('lower')[0].noLamps);
+
+// Leaving mapped asphalt must not change acceleration or impose a speed cap.
+const { stepCar } = await import('../app/js/physics.js');
+const onAsphalt = { x: 0, z: 0, yaw: 0, steer: 0, speed: 40 };
+const offAsphalt = { ...onAsphalt };
+for (let i = 0; i < 120; i++) {
+  stepCar(onAsphalt, { forward: true }, 1 / 60, true);
+  stepCar(offAsphalt, { forward: true }, 1 / 60, false);
+}
+assert.deepEqual(offAsphalt, onAsphalt);
+assert(offAsphalt.speed > 40, 'Off-road throttle must still accelerate above the old limit');
