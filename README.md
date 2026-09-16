@@ -25,7 +25,7 @@ The importer clips again to the supplied boundary, reconstructs multipolygon rel
 
 For direct GeoJSON replacement use the schema in the existing manifest and chunk files. Building heights use `height`, then `building:levels * 3.2`, then a 12.8 m estimate. Road widths use the OSM `width` tag or a highway-class fallback. The build prepares sampled, graded bridge and tunnel approaches plus lane metadata; this is stylised road elevation, not surveyed terrain or legal navigation.
 
-The loader fetches nearby static chunks and unloads distant building/road meshes. The road overview and vegetation are prepared at startup; extremely large extracts may need additional overview simplification and vegetation tiling. There is no measured performance guarantee for a full-island extract yet.
+The loader fetches nearby static chunks and unloads distant building/road meshes. The road overview is prepared at startup; extremely large extracts may need additional overview simplification. There is no measured performance guarantee for a full-island extract yet.
 
 ## Layout
 

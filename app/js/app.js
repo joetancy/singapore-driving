@@ -47,7 +47,6 @@ let roads = [],
   waterPolygons = [],
   boundaryPolygons = [],
   areas = [],
-  roadFeatures = [],
   chunkState = new Map(),
   lastStream = 0,
   lastHud = 0,
@@ -109,7 +108,7 @@ function createChunk(data) {
     bridgeGeo = [],
     roadGeo = [],
     pavementGeo = [],
-    markGeo = [], stopGeo = [], tunnelGeo = [], lampGeo = [], lampHeadGeo = [],
+    markGeo = [], tunnelGeo = [], lampGeo = [], lampHeadGeo = [],
     segments = [],
     lampPoints = [],
     blocks = [],
@@ -124,13 +123,16 @@ function createChunk(data) {
         );
       })
       .flatMap((f) => ringsOf(f).map((raw) => raw.map((ring) => ring.map(point))));
-  const roadAt = (x, z) => {
+  const roadAt = (x, z, height = null) => {
     let best = null;
     for (const f of data.features) if (f.geometry.type === "LineString") {
-      const width = clamp(parseFloat(f.properties?.width) || 10, 4, 32), pts = f.geometry.coordinates.map(point);
+      const width = clamp(parseFloat(f.properties?.width) || 10, 4, 32),
+        pts = f.properties?.samples || f.geometry.coordinates.map(point);
       for (let i = 1; i < pts.length; i++) {
         const hit = nearestPoint(x, z, pts[i - 1], pts[i]);
-        if (!best || hit.d < best.d) best = { ...hit, a: pts[i - 1], b: pts[i], width };
+        const y = (pts[i - 1][2] || 0) + ((pts[i][2] || 0) - (pts[i - 1][2] || 0)) * hit.t;
+        if ((height == null || Math.abs(y - height) < 1) && (!best || hit.d < best.d))
+          best = { ...hit, a: pts[i - 1], b: pts[i], width, y };
       }
     }
     return best;
@@ -159,6 +161,10 @@ function createChunk(data) {
           residential: 9, service: 6 }[props.highway] || 10), 4, 32);
       const pts = props.samples;
       if (!pts?.length) throw new Error("Road assets require npm run build");
+      const startDistance = pts[0][3], endDistance = pts[pts.length - 1][3];
+      const atJunction = (d) =>
+        (props.connections?.start?.length > 1 && d - startDistance < 14) ||
+        (props.connections?.end?.length > 1 && endDistance - d < 14);
       for (let i = 0; i < pts.length - 1; i++) {
         const a = pts[i], b = pts[i + 1], len = Math.hypot(b[0] - a[0], b[1] - a[1]);
         if (len < 0.01) continue;
@@ -173,7 +179,7 @@ function createChunk(data) {
         const elevated = Math.max(a[2], b[2]) > 0.3;
         if (elevated) {
           bridgeGeo.push(deck(a, b, width + 4));
-          for (const side of [-1, 1])
+          if (!atJunction(a[3]) && !atJunction(b[3])) for (const side of [-1, 1])
             bridgeGeo.push(deck(a, b, 0.16, 0.01, 0.81, side * (width / 2 + 1.7)));
           if (Math.floor(a[3] / 40) !== Math.floor(b[3] / 40)) {
             const h = Math.max(0.1, (a[2] + b[2]) / 2 - 0.7);
@@ -185,48 +191,42 @@ function createChunk(data) {
         pavementGeo.push(ribbon(a, b, width + 4, 0.025, "#b4bdb8"));
         roadGeo.push(ribbon(a, b, width, 0.065, "#48575b"));
         const interpolate = (t) => a.map((v, j) => v + (b[j] - v) * t);
-        const stopLine = (p) => stopGeo.push(quad(
-          [p[0] + p[4] * width / 2, p[1] + p[5] * width / 2],
-          [p[0] - p[4] * width / 2, p[1] - p[5] * width / 2],
-          0.22, p[2] + 0.095, "#f4f3e6"));
-        if (!segment.tunnel) {
-          if (i === 0 && (props.connections?.start?.length || 0) > 1)
-            stopLine(interpolate(Math.min(6 / len, 0.4)));
-          if (i === pts.length - 2 && (props.connections?.end?.length || 0) > 1)
-            stopLine(interpolate(1 - Math.min(6 / len, 0.4)));
-        }
         const lanes = props.laneLayout;
         const dividers = lanes?.total > 1 ? Array.from({ length: lanes.total - 1 }, (_, n) =>
           (n + 1 - lanes.total / 2) * width / lanes.total) : [];
         for (const lateral of dividers) for (let d = Math.floor(a[3] / 13) * 13; d < b[3]; d += 13) {
           const lo = Math.max(d, a[3]), hi = Math.min(d + 5, b[3]);
-          const nearJunction = (props.connections?.start?.length && lo - a[3] < 8) ||
-            (props.connections?.end?.length && b[3] - hi < 8);
-          if (hi > lo && !nearJunction) markGeo.push(ribbon(
+          if (hi > lo && !atJunction(lo) && !atJunction(hi)) markGeo.push(ribbon(
             interpolate((lo - a[3]) / (b[3] - a[3])),
             interpolate((hi - a[3]) / (b[3] - a[3])), 0.16, 0.09, "#e7e8d6", lateral));
         }
-        for (const side of [-1, 1])
+        if (!atJunction(a[3]) && !atJunction(b[3])) for (const side of [-1, 1])
           markGeo.push(ribbon(a, b, 0.12, 0.09, "#d3c990", side * (width / 2 - 0.65)));
         const spacing = { motorway: 50, trunk: 45, primary: 45 }[props.highway] || 40;
         if (!segment.tunnel) for (let d = Math.ceil((a[3] + 0.01) / spacing) * spacing; d < b[3] - 0.01; d += spacing) {
-          if ((props.connections?.start?.length && d - a[3] < 12) || (props.connections?.end?.length && b[3] - d < 12)) continue;
+          if (atJunction(d)) continue;
           const t = (d - a[3]) / (b[3] - a[3]), p = interpolate(t), side = Math.floor(d / spacing) % 2 ? 1 : -1;
           const x = p[0] + p[4] * side * (width / 2 + 1.5), z = p[1] + p[5] * side * (width / 2 + 1.5);
-          const blocked = buildingBases.some((rings) => inPolygon(x, z, rings)) || waterPolygons.some((rings) => inPolygon(x, z, rings));
+          const road = roadAt(x, z, p[2]);
+          const blocked = (road && road.d < road.width / 2 + 0.5) || buildingBases.some((rings) => inPolygon(x, z, rings)) || waterPolygons.some((rings) => inPolygon(x, z, rings));
           if (blocked) continue;
           const pole = new THREE.CylinderGeometry(0.08, 0.12, 8, 6); pole.translate(x, p[2] + 4, z); lampGeo.push(pole);
-          const head = new THREE.SphereGeometry(0.22, 6, 4); head.translate(x, p[2] + 7.9, z); lampHeadGeo.push(head);
-          lampPoints.push([x, p[2] + 7.9, z]);
+          const rx = -p[4] * side, rz = -p[5] * side, angle = Math.atan2(-rz, rx);
+          const arm = new THREE.BoxGeometry(2.6, 0.12, 0.12); arm.rotateY(angle); arm.translate(x + rx * 1.3, p[2] + 7.9, z + rz * 1.3); lampGeo.push(arm);
+          const head = new THREE.BoxGeometry(0.7, 0.14, 0.3); head.rotateY(angle); head.translate(x + rx * 2.45, p[2] + 7.82, z + rz * 2.45); lampHeadGeo.push(head);
+          lampPoints.push([x + rx * 2.45, p[2] + 7.75, z + rz * 2.45]);
         }
-        if (!segment.tunnel && pts.length > 1 && pts[pts.length - 1][3] - pts[0][3] < spacing && i === Math.floor((pts.length - 2) / 2)) {
-          const p = interpolate(0.5), side = i % 2 ? 1 : -1;
-          const x = p[0] + p[4] * side * (width / 2 + 1.5), z = p[1] + p[5] * side * (width / 2 + 1.5);
-          if (!buildingBases.some((rings) => inPolygon(x, z, rings)) && !waterPolygons.some((rings) => inPolygon(x, z, rings))) {
-            const pole = new THREE.CylinderGeometry(0.08, 0.12, 8, 6); pole.translate(x, p[2] + 4, z); lampGeo.push(pole);
-            const head = new THREE.SphereGeometry(0.22, 6, 4); head.translate(x, p[2] + 7.9, z); lampHeadGeo.push(head);
-            lampPoints.push([x, p[2] + 7.9, z]);
-          }
+        if (lanes?.total > 1 && !segment.tunnel) for (let d = Math.ceil((a[3] + 0.01) / 45) * 45; d < b[3] - 0.01; d += 45) {
+          if (atJunction(d)) continue;
+          const p = interpolate((d - a[3]) / (b[3] - a[3])), laneWidth = width / lanes.total;
+          const arrow = (lateral, direction) => {
+            const x = p[0] + p[4] * lateral, z = p[1] + p[5] * lateral, tx = p[5] * direction, tz = -p[4] * direction;
+            markGeo.push(quad([x - tx * 1.6, z - tz * 1.6], [x + tx * 1.6, z + tz * 1.6], 0.24, p[2] + 0.095, "#e7e8d6"));
+            markGeo.push(quad([x + tx * 1.55, z + tz * 1.55], [x + tx * 0.55 + p[4] * 0.75, z + tz * 0.55 + p[5] * 0.75], 0.2, p[2] + 0.095, "#e7e8d6"));
+            markGeo.push(quad([x + tx * 1.55, z + tz * 1.55], [x + tx * 0.55 - p[4] * 0.75, z + tz * 0.55 - p[5] * 0.75], 0.2, p[2] + 0.095, "#e7e8d6"));
+          };
+          for (let n = 0; n < lanes.forward; n++) arrow(width / 2 - laneWidth * (n + 0.5), 1);
+          for (let n = 0; n < lanes.backward; n++) arrow(-width / 2 + laneWidth * (n + 0.5), -1);
         }
       }
     } else {
@@ -286,7 +286,6 @@ function createChunk(data) {
   mergeInto(group, tunnelGeo, worldMaterials.tunnel);
   mergeInto(group, roadGeo.filter(Boolean), worldMaterials.road);
   mergeInto(group, markGeo.filter(Boolean), worldMaterials.mark);
-  mergeInto(group, stopGeo.filter(Boolean), worldMaterials.mark);
   mergeInto(group, lampGeo, worldMaterials.lamp);
   mergeInto(group, lampHeadGeo, worldMaterials.lampHead);
   mergeInto(group, buildingGeo, worldMaterials.building, true);
@@ -493,75 +492,6 @@ function createCar() {
   group.add(box(0.42, 0.13, 0.08, chrome, 0, 0.64, 2.22));
   scene.add(group);
   return group;
-}
-function addTrees() {
-  const trunks = [],
-    crowns = [],
-    trunk = new THREE.MeshStandardMaterial({ color: "#786f56" }),
-    leaves = new THREE.MeshStandardMaterial({ color: "#5e846b", roughness: 1 });
-  let n = 0,
-    seed = 1717;
-  const rand = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296,
-    add = (x, z, s) => {
-      const h = 3 + s * 3.5,
-        tg = new THREE.CylinderGeometry(0.22 + s * 0.12, 0.34 + s * 0.16, h, 5);
-      tg.translate(x, h / 2, z);
-      trunks.push(tg);
-      const cg = new THREE.IcosahedronGeometry(2.4 + s * 1.8, 1);
-      cg.scale(1, 1.1 + s * 0.12, 1);
-      cg.translate(x, h + 1.3 + s, z);
-      crowns.push(cg);
-      n++;
-    };
-  for (const f of roadFeatures) {
-    const pts = f.geometry.coordinates.map(point);
-    for (let i = 0; i < pts.length - 1 && n < 900; i++) {
-      const a = pts[i],
-        b = pts[i + 1],
-        dx = b[0] - a[0],
-        dz = b[1] - a[1],
-        len = Math.hypot(dx, dz);
-      for (let t = 25; t < len && n < 900; t += 42 + rand() * 28) {
-        const off = (parseFloat(f.properties.width) || 12) / 2 + 5 + rand() * 4,
-          x = a[0] + (dx * t) / len - (dz / len) * off,
-          z = a[1] + (dz * t) / len + (dx / len) * off;
-        if (!waterPolygons.some((r) => inPolygon(x, z, r)))
-          add(x, z, 0.55 + rand() * 1.25);
-      }
-    }
-  }
-  for (const area of areas.filter((a) => a.kind === "park")) {
-    const ring = area.rings[0],
-      xs = ring.map((p) => p[0]),
-      zs = ring.map((p) => p[1]),
-      count = Math.min(
-        35,
-        Math.max(
-          6,
-          Math.floor(
-            ((Math.max(...xs) - Math.min(...xs)) *
-              (Math.max(...zs) - Math.min(...zs))) /
-              18000,
-          ),
-        ),
-      );
-    for (let i = 0; i < count && n < 1600; i++) {
-      let placed = false;
-      for (let tries = 0; tries < 8 && !placed; tries++) {
-        const x =
-            Math.min(...xs) + rand() * (Math.max(...xs) - Math.min(...xs)),
-          z = Math.min(...zs) + rand() * (Math.max(...zs) - Math.min(...zs));
-        if (inPolygon(x, z, area.rings)) {
-          add(x, z, 0.4 + rand() * 1.7);
-          placed = true;
-        }
-      }
-    }
-  }
-  const group = new THREE.Group();
-  mergeInto(group, trunks, trunk);
-  mergeInto(group, crowns, leaves, true);
-  scene.add(group);
 }
 function setupMinimap() {
   const svg = d3.select("#minimap");
@@ -949,6 +879,7 @@ function animate() {
   car.rotation.x = Math.atan(slope * alignment);
   for (const wheel of allWheels) wheel.rotation.x -= (state.speed * dt) / 0.4;
   for (const wheel of frontWheels) wheel.rotation.y = -state.steer * 0.4;
+  const underground = !!activeRoad?.tunnel;
   if (firstPerson) {
     camera.position.set(
       state.x + Math.cos(state.yaw) * 0.34 + Math.sin(state.yaw) * 0.98,
@@ -956,27 +887,33 @@ function animate() {
       state.z + Math.sin(state.yaw) * 0.34 - Math.cos(state.yaw) * 0.98,
     );
     lookTarget.set(
-      state.x + Math.sin(state.yaw) * 32,
+      state.x + Math.sin(state.yaw) * (underground ? 12 : 32),
       smoothGround + 1.65,
       state.z - Math.cos(state.yaw) * 32,
     );
   } else {
-    const follow = 19 + Math.min(6, Math.abs(state.speed) * 0.16);
+    const follow = underground ? 3 : 19 + Math.min(6, Math.abs(state.speed) * 0.16);
     cameraTarget.set(
       state.x - Math.sin(state.yaw) * follow,
-      smoothGround + 8.5 + Math.abs(state.speed) * 0.045,
+      smoothGround + (underground ? 1.8 : 8.5 + Math.abs(state.speed) * 0.045),
       state.z + Math.cos(state.yaw) * follow,
     );
-    camera.position.lerp(cameraTarget, 1 - Math.exp(-5 * dt));
+    const cameraRoad = underground && surfaceAt(surfaces, cameraTarget.x, cameraTarget.z, activeRoad, smoothGround);
+    if (underground && !cameraRoad?.tunnel) cameraTarget.set(
+      state.x - Math.sin(state.yaw) * 0.7, smoothGround + 1.8, state.z + Math.cos(state.yaw) * 0.7);
+    if (underground) camera.position.copy(cameraTarget);
+    else camera.position.lerp(cameraTarget, 1 - Math.exp(-5 * dt));
     lookTarget.lerp(
       new THREE.Vector3(
         state.x + Math.sin(state.yaw) * 9,
-        smoothGround + 2.5,
+        smoothGround + (underground ? 1.7 : 2.5),
         state.z - Math.cos(state.yaw) * 9,
       ),
-      1 - Math.exp(-7 * dt),
+      underground ? 1 : 1 - Math.exp(-7 * dt),
     );
   }
+  for (const material of [worldMaterials.building, worldMaterials.water, worldMaterials.park])
+    if (material) material.visible = !underground;
   camera.lookAt(lookTarget);
   sunTarget.position.set(state.x, 0, state.z);
   const sun = scene.getObjectByName("sun");
@@ -1133,11 +1070,7 @@ async function init() {
         "Singapore geometry derived from OpenStreetMap, licensed under ODbL. Buildings use recorded heights or estimated floor heights; roads and vehicle physics are simplified. Coverage is limited to the bundled extract. See data/source.json for provenance.";
     }
     $("district").textContent = manifest.name || "Singapore";
-    const [rd, ar] = await Promise.all([
-      json("./data/roads.geojson"),
-      json("./data/areas.geojson"),
-    ]);
-    roadFeatures = rd.features;
+    const ar = await json("./data/areas.geojson");
     if (manifest.boundaryFile) {
       const border = await json("./data/" + manifest.boundaryFile);
       boundaryPolygons = border.features.flatMap((f) =>
@@ -1151,7 +1084,6 @@ async function init() {
     $("loading-message").textContent = "Loading the neighbourhood…";
     await streamChunks(true);
     car = createCar();
-    addTrees();
     setupMinimap();
     resetCar(false);
     setNight(night);
