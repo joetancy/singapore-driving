@@ -10,6 +10,7 @@ const nearest = (p, a, b) => {
 // in exactly the same junction, barrier and street-lamp clearance decisions.
 export function prepareLayout(features, samples) {
   const cells = new Map(), edges = [], result = new Map();
+  const widths = new Map();
   const size = 40;
   for (const f of features) {
     const pts = samples.get(f.id) || [], width = roadWidth(f.properties);
@@ -19,6 +20,7 @@ export function prepareLayout(features, samples) {
       const a = pts[i - 1], b = pts[i];
       if (Math.hypot(b[0] - a[0], b[1] - a[1]) < 0.001) { flags.push({}); continue; }
       const e = { a, b, width, f, index: i - 1, source: String(f.id).replace(/-\d+-\d+$/, '') };
+      widths.set(e.source, Math.min(widths.get(e.source) ?? Infinity, width));
       edges.push(e); flags.push({});
       const margin = width / 2 + 2;
       for (let x = Math.floor((Math.min(a[0], b[0]) - margin) / size); x <= Math.floor((Math.max(a[0], b[0]) + margin) / size); x++)
@@ -51,6 +53,31 @@ export function prepareLayout(features, samples) {
       if (e.source === q.source && arcGap < Math.max(e.width, q.width) * 2) continue;
       const shared = [e.a, e.b].some(a => [q.a, q.b].some(b => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) < 0.01));
       const qdx = q.b[0] - q.a[0], qdz = q.b[1] - q.a[1];
+      // Fit distinct parallel carriageways into the space between their
+      // centre lines. Use one width per source way to avoid sample-by-sample
+      // pinching, and never squeeze stacked roads or actual junctions.
+      const qlen = Math.hypot(qdx, qdz);
+      const alignment = Math.abs((dx * qdx + dz * qdz) / (len * qlen));
+      if (!shared && e.source !== q.source && alignment > 0.995) {
+        const mid = [(e.a[0] + e.b[0]) / 2, (e.a[1] + e.b[1]) / 2];
+        const along = ((mid[0] - q.a[0]) * qdx + (mid[1] - q.a[1]) * qdz) / qlen;
+        const separation = Math.abs((mid[0] - q.a[0]) * qdz - (mid[1] - q.a[1]) * qdx) / qlen;
+        const hit = nearest(mid, q.a, q.b);
+        const underground = Math.min(e.a[2], e.b[2], q.a[2], q.b[2]) < -0.3;
+        const margin = underground ? 2.5 : 1.8;
+        const available = separation - margin;
+        if (along >= 0 && along <= qlen && available >= 3 &&
+            Math.abs(hit.y - (e.a[2] + e.b[2]) / 2) < 0.3 &&
+            available < (e.width + q.width) / 2) {
+          const factor = available / ((e.width + q.width) / 2);
+          if (Math.min(e.width, q.width) * factor < 2.8) continue;
+          widths.set(e.source, Math.min(widths.get(e.source), e.width * factor));
+          widths.set(q.source, Math.min(widths.get(q.source), q.width * factor));
+          flags.noLamps = true;
+          // These remain separate carriageways, not an open merge.
+          continue;
+        }
+      }
       // Ordinary end-to-end joins between separately named ways aren't overlaps.
       const straightJoin = shared && [e.a, e.b].some((p, ei) => [q.a, q.b].some((r, qi) => {
         if (Math.hypot(p[0] - r[0], p[1] - r[1], p[2] - r[2]) >= 0.01) return false;
@@ -78,5 +105,5 @@ export function prepareLayout(features, samples) {
     }
     if (flags.noLamps) overlaps++;
   }
-  return { segments: result, overlaps };
+  return { segments: result, overlaps, widths };
 }

@@ -10,7 +10,7 @@ import {
   tunnelPassage,
 } from "./geometry.js";
 import { loadPreferences, saveNight, saveSpawn } from "./storage.js";
-import { roadIndex, surfaceAt, sampleHeight } from "./roads.js";
+import { roadIndex, surfaceAt, sampleHeight, drivingContact } from "./roads.js";
 import { createSpawnPicker } from "./spawn-map.js";
 import {
   clamp,
@@ -218,7 +218,7 @@ function createChunk(data) {
       if (props.roadVisible === false) continue;
       const width = clamp(parseFloat(props.width) ||
         ({ motorway: 18, trunk: 18, primary: 16, secondary: 14, tertiary: 11,
-          residential: 9, service: 6 }[props.highway] || 10), 4, 32);
+          residential: 9, service: 6 }[props.highway] || 10), 2, 32);
       const pts = props.samples;
       if (!pts?.length) throw new Error("Road assets require npm run build");
       const startDistance = pts[0][3], endDistance = pts[pts.length - 1][3];
@@ -926,7 +926,7 @@ function animate() {
       const oldX = state.x,
         oldZ = state.z;
       stepCar(state, input, dt / steps);
-      const contact = surfaceAt(surfaces, state.x, state.z, activeRoad, smoothGround);
+      const contact = drivingContact(surfaces, state, activeRoad, smoothGround);
       const ll = projection.invert([state.x, state.z]),
         bb = manifest.bounds;
       const outside =
@@ -937,7 +937,7 @@ function animate() {
         (boundaryPolygons.length &&
           !boundaryPolygons.some((r) => inPolygon(state.x, state.z, r)));
       const water =
-        (!contact || contact.y < 0.1) &&
+        !contact?.tunnel && (!contact || contact.y < 0.1) &&
         waterPolygons.some((r) => inPolygon(state.x, state.z, r));
       if (outside || water || blocked(
         state.x,

@@ -181,3 +181,38 @@ for (let i = 0; i < 120; i++) {
 }
 assert.deepEqual(offAsphalt, onAsphalt);
 assert(offAsphalt.speed > 40, 'Off-road throttle must still accelerate above the old limit');
+
+const { drivingContact } = await import('../app/js/roads.js');
+const tunnelEdge = { ...tunnelRoads[1], tunnel: true };
+const underSurface = { id: 'surface-above', a: [50, 0, 0], b: [100, 0, 0], width: 20 };
+const edgeIndex = roadIndex([tunnelEdge, underSurface]);
+const edgeCar = { x: 70, z: 7, speed: 40, yaw: 0 };
+const edgeContact = drivingContact(edgeIndex, edgeCar, tunnelEdge, -4);
+assert.equal(edgeContact.y, -4);
+assert.equal(edgeContact.id, tunnelEdge.id);
+assert(edgeCar.z <= tunnelEdge.width / 2 - 1.1 + 1e-9);
+assert.equal(edgeCar.speed, 40);
+const lostEnd = { x: 110, z: 0, speed: 40 };
+assert.equal(drivingContact(edgeIndex, lostEnd, tunnelEdge, -4).y, -4);
+assert.equal(lostEnd.x, 100);
+// Connected tunnel exits still climb the ramp normally.
+const exiting = { id: 'exit', featureId: 'exit', connections: ['tunnel'], a: [100, 0, -4], b: [150, 0, 0], width: 10, tunnel: true };
+const connectedTunnel = { ...tunnelEdge, connections: ['exit'] };
+assert(drivingContact(roadIndex([connectedTunnel, exiting]), {x: 101, z: 0}, connectedTunnel, -4).y > -4);
+
+const parallelSamples = new Map([
+  ['lower', [[0, 0, 0, 0, 0, 1], [20, 0, 0, 20, 0, 1]]],
+  ['upper', [[0, 7, 0, 0, 0, 1], [20, 7, 0, 20, 0, 1]]],
+]);
+const fitted = prepareLayout(overlapFeatures, parallelSamples);
+assert((fitted.widths.get('lower') + fitted.widths.get('upper')) / 2 + 1.8 <= 7.00001);
+const stackedSamples = new Map(parallelSamples);
+stackedSamples.set('upper', [[0, 7, 4, 0, 0, 1], [20, 7, 4, 20, 0, 1]]);
+assert.equal(prepareLayout(overlapFeatures, stackedSamples).widths.get('lower'), roadWidth(overlapFeatures[0].properties));
+const twinTunnels = new Map([
+  ['lower', [[0, 0, -4, 0, 0, 1], [20, 0, -4, 20, 0, 1]]],
+  ['upper', [[20, 7, -4, 0, 0, -1], [0, 7, -4, 20, 0, -1]]],
+]);
+const fittedTunnels = prepareLayout(overlapFeatures, twinTunnels);
+assert((fittedTunnels.widths.get('lower') + fittedTunnels.widths.get('upper')) / 2 + 2.5 <= 7.00001);
+assert(!fittedTunnels.segments.get('lower')[0].left, 'Adjacent tunnels must retain their separating walls');
