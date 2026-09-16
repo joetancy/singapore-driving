@@ -103,9 +103,9 @@ export function deck(a, b, width, bottom = -0.7, top = 0.01, lateral = 0) {
   return geometry;
 }
 
-export function tunnelPassage(a, b, width, clearance = 4.5) {
+export function tunnelPassage(a, b, width, clearance = 3.5) {
   const edge = (p, side, height) => [p[0] + p[4] * side * width / 2,
-    p[2] + height, p[1] + p[5] * side * width / 2];
+    height ? Math.max(p[2], Math.min(-0.35, p[2] + height)) : p[2], p[1] + p[5] * side * width / 2];
   const al = edge(a, 1, 0), ar = edge(a, -1, 0), bl = edge(b, 1, 0), br = edge(b, -1, 0);
   const alt = edge(a, 1, clearance), art = edge(a, -1, clearance);
   const blt = edge(b, 1, clearance), brt = edge(b, -1, clearance);
@@ -113,7 +113,7 @@ export function tunnelPassage(a, b, width, clearance = 4.5) {
   geometry.setAttribute("position", new THREE.Float32BufferAttribute([
     ...al, ...alt, ...bl, ...alt, ...blt, ...bl,
     ...ar, ...br, ...art, ...art, ...br, ...brt,
-    ...alt, ...art, ...blt, ...art, ...brt, ...blt,
+    ...(Math.max(a[2], b[2]) <= -3.85 ? [...alt, ...art, ...blt, ...art, ...brt, ...blt] : []),
   ], 3));
   geometry.computeVertexNormals();
   return geometry;

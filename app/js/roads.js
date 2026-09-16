@@ -65,7 +65,7 @@ export function surfaceAt(index, x, z, active = null, height = 0) {
     if (active && !linked) {
       // Only ground-level junctions allow transfers without an explicit link.
       // Similar source IDs alone never connect stacked or looping roads.
-      if (Math.max(y, height) > 0.3 || Math.abs(y - height) > 0.08) continue;
+      if (Math.max(Math.abs(y), Math.abs(height)) > 0.3 || Math.abs(y - height) > 0.08) continue;
     }
     if (Math.abs(y - height) > 0.6) continue;
     const score = p.d + Math.abs(y - height) * 8 - (active?.id === r.id ? 0.75 : 0);

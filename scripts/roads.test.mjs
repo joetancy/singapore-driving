@@ -89,3 +89,21 @@ const tunnelRoads = [
 const tunnelIndex = roadIndex(tunnelRoads);
 assert.equal(surfaceAt(tunnelIndex, 50.7, 0, tunnelRoads[0], -4).id, "tunnel");
 console.log("road preparation and surface contact checks passed");
+
+// Separate underground passages cannot transfer at an undeclared crossing.
+const crossing = [
+  { id: "east", featureId: "east", connections: [], a: [-20, 0, -4], b: [20, 0, -4], width: 6 },
+  { id: "north", featureId: "north", connections: [], a: [0, -20, -4], b: [0, 20, -4], width: 6 },
+];
+assert.equal(surfaceAt(roadIndex(crossing), 0, 5, crossing[0], -4), null);
+const crossingLevels = prepareRoads([
+  road("below-in", [[103.849, 1.29], junction], { tunnel: "yes" }),
+  road("below-out", [junction, [103.851, 1.29]], { tunnel: "yes" }),
+  road("surface-out", [junction, [103.851, 1.2901]]),
+], center);
+assert(crossingLevels.samples.get("surface-out").every(p => p[2] === 0));
+const { tunnelPassage } = await import("../app/js/geometry.js");
+const passage = tunnelPassage([0, 0, -4, 0, 0, 1], [10, 0, -4, 10, 0, 1], 12);
+const positions = passage.attributes.position;
+for (let i = 0; i < positions.count; i++) assert(positions.getY(i) < 0, "Tunnel roof must stay below surface roads");
+passage.dispose();

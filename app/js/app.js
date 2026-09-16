@@ -94,7 +94,7 @@ function setNight(value) {
   sunLight.intensity = night ? 0.45 : 3;
   worldMaterials.water?.color.set(night ? "#173d65" : "#4f939a");
   if (worldMaterials.lampGlow)
-    worldMaterials.lampGlow.opacity = night ? 0.2 : 0.045;
+    worldMaterials.lampGlow.opacity = night ? 0.3 : 0.055;
   if (worldMaterials.lampHead)
     worldMaterials.lampHead.emissiveIntensity = night ? 2.6 : 0.35;
 }
@@ -114,8 +114,26 @@ function orientedBox(width, height, depth, x, y, z, yaw = 0) {
   return geometry;
 }
 function downGlow(x, y, z, radius = 2.2, height = 5) {
-  const geometry = new THREE.ConeGeometry(radius, height, 10, 1, true);
+  const geometry = new THREE.ConeGeometry(radius, height, 16, 1, true);
+  const colors = [];
+  for (let i = 0; i < geometry.attributes.position.count; i++) {
+    const strength = geometry.attributes.position.getY(i) > 0 ? 0.7 : 0;
+    colors.push(strength, strength, strength);
+  }
+  geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
   geometry.translate(x, y - height / 2, z);
+  return geometry;
+}
+function lightPool(x, y, z, radius) {
+  const geometry = new THREE.CircleGeometry(radius, 24);
+  const colors = [];
+  for (let i = 0; i < geometry.attributes.position.count; i++) {
+    const strength = i === 0 ? 1 : 0;
+    colors.push(strength, strength, strength);
+  }
+  geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+  geometry.rotateX(-Math.PI / 2);
+  geometry.translate(x, y + 0.09, z);
   return geometry;
 }
 function addTunnelPortal(a, b, width, frames, insets) {
@@ -217,7 +235,7 @@ function createChunk(data) {
           source: props.sourceId || String(f.id).replace(/-\d+-\d+$/, ""), featureId: f.id,
           connections: [...(props.connections?.start || []), ...(props.connections?.end || [])],
           highway: props.highway, laneLayout: props.laneLayout,
-          tunnel: props.tunnel && props.tunnel !== "no" || Number(props.layer) < 0 };
+          tunnel: Math.min(a[2], b[2]) < -0.3 };
         segments.push(segment);
         if (segment.tunnel) tunnelGeo.push(tunnelPassage(a, b, width + 2));
         const elevated = Math.max(a[2], b[2]) > 0.3,
@@ -243,15 +261,16 @@ function createChunk(data) {
         const dividers = lanes?.total > 1 ? Array.from({ length: lanes.total - 1 }, (_, n) =>
           (n + 1 - lanes.total / 2) * width / lanes.total) : [];
         if (
-          underground &&
+          Math.max(a[2], b[2]) < -3.85 &&
           Math.floor(a[3] / 22) !== Math.floor(b[3] / 22)
         ) {
-          const distance = Math.ceil(a[3] / 22) * 22,
+          const distance = Math.ceil((a[3] + 0.001) / 22) * 22,
             light = interpolate(clamp((distance - a[3]) / (b[3] - a[3]), 0, 1)),
             yaw = Math.atan2(b[0] - a[0], b[1] - a[1]),
             ceiling = light[2] + 3.35;
           tunnelLightGeo.push(orientedBox(1.35, 0.12, 0.34,
             light[0], ceiling, light[1], yaw));
+          tunnelGlowGeo.push(lightPool(light[0], light[2], light[1], width * 0.65));
           tunnelGlowGeo.push(downGlow(
             light[0], ceiling - 0.05, light[1], 2.5, 3.15,
           ));
@@ -277,6 +296,7 @@ function createChunk(data) {
           const arm = new THREE.BoxGeometry(2.6, 0.12, 0.12); arm.rotateY(angle); arm.translate(x + rx * 1.3, p[2] + 7.9, z + rz * 1.3); lampGeo.push(arm);
           const head = new THREE.BoxGeometry(0.7, 0.14, 0.3); head.rotateY(angle); head.translate(x + rx * 2.45, p[2] + 7.82, z + rz * 2.45); lampHeadGeo.push(head);
           lampPoints.push([x + rx * 2.45, p[2] + 7.75, z + rz * 2.45]);
+          lampGlowGeo.push(lightPool(x + rx * 2.45, p[2], z + rz * 2.45, 5));
           lampGlowGeo.push(downGlow(x + rx * 2.45, p[2] + 7.7, z + rz * 2.45, 2.8, 6.4));
         }
         if (lanes?.total > 1 && !segment.tunnel) for (let d = Math.ceil((a[3] + 0.01) / 45) * 45; d < b[3] - 0.01; d += 45) {
@@ -355,7 +375,7 @@ function createChunk(data) {
   mergeInto(group, lampGlowGeo, worldMaterials.lampGlow);
   mergeInto(group, portalGeo, worldMaterials.tunnelPortal);
   mergeInto(group, portalInsetGeo, worldMaterials.tunnelInset);
-  mergeInto(group, tunnelLightGeo, worldMaterials.lampHead);
+  mergeInto(group, tunnelLightGeo, worldMaterials.tunnelLamp);
   mergeInto(group, tunnelGlowGeo, worldMaterials.tunnelGlow);
   mergeInto(group, buildingGeo, worldMaterials.building, true);
   group.userData = { segments, blocks, lamps: lampPoints };
@@ -417,8 +437,8 @@ function updateNightLights() {
   }
 }
 function updateTunnelOpenings() {
-  // ponytail: 64 nearby passages fit WebGL1 uniforms; tile the ground if dense tunnel networks exceed it.
-  const nearby = roads.filter((r) => r.tunnel)
+  // Only open ramps cut the terrain; covered tunnels retain the surface above.
+  const nearby = roads.filter((r) => r.tunnel && Math.max(r.a[2], r.b[2]) > -3.85)
     .sort((a, b) => Math.min(Math.hypot(state.x - a.a[0], state.z - a.a[1]), Math.hypot(state.x - a.b[0], state.z - a.b[1])) -
       Math.min(Math.hypot(state.x - b.a[0], state.z - b.a[1]), Math.hypot(state.x - b.b[0], state.z - b.b[1])))
     .slice(0, 64);
@@ -750,6 +770,8 @@ function setHudHidden(value) {
 }
 function toggleView() {
   firstPerson = !firstPerson;
+  $("view-toggle").setAttribute("aria-pressed", String(firstPerson));
+  $("view-toggle").querySelector(".view-label").textContent = firstPerson ? "Chase view" : "Driver view";
   $("view-toggle").dataset.label = firstPerson ? "Chase view" : "Driver view";
   $("view-toggle").setAttribute(
     "aria-label",
@@ -981,7 +1003,7 @@ function animate() {
     lookTarget.set(
       state.x + Math.sin(state.yaw) * (underground ? 12 : 32),
       smoothGround + 1.65,
-      state.z - Math.cos(state.yaw) * 32,
+      state.z - Math.cos(state.yaw) * (underground ? 12 : 32),
     );
   } else {
     const follow = underground ? 3 : 19 + Math.min(6, Math.abs(state.speed) * 0.16);
@@ -1103,6 +1125,11 @@ async function init() {
       roughness: 1,
       side: THREE.DoubleSide,
     });
+    worldMaterials.tunnelLamp = new THREE.MeshBasicMaterial({ color: "#fff0c0" });
+    worldMaterials.tunnel.emissive = new THREE.Color("#546777");
+    worldMaterials.tunnel.emissiveIntensity = 0.28;
+    worldMaterials.tunnelRoad.emissive = new THREE.Color("#303942");
+    worldMaterials.tunnelRoad.emissiveIntensity = 0.2;
     worldMaterials.tunnelPortal = new THREE.MeshStandardMaterial({
       color: "#697477",
       roughness: 0.96,
@@ -1115,7 +1142,8 @@ async function init() {
     worldMaterials.lampGlow = new THREE.MeshBasicMaterial({
       color: "#ffe6a0",
       transparent: true,
-      opacity: 0.045,
+      opacity: 0.055,
+      vertexColors: true,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
       side: THREE.DoubleSide,
@@ -1123,7 +1151,8 @@ async function init() {
     worldMaterials.tunnelGlow = new THREE.MeshBasicMaterial({
       color: "#ffe3a0",
       transparent: true,
-      opacity: 0.18,
+      opacity: 0.42,
+      vertexColors: true,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
       side: THREE.DoubleSide,
