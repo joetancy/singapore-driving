@@ -73,6 +73,7 @@ canvas:focus-visible {
 }
 .topbar {
   position: absolute;
+  z-index: 10;
   top: 0;
   left: 0;
   width: 100%;
@@ -128,6 +129,15 @@ h1 span {
   align-items: center;
   gap: 10px;
   pointer-events: auto;
+}
+.action-items {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.actions-toggle,
+.mobile-action {
+  display: none;
 }
 .country {
   color: #193840;
@@ -604,6 +614,48 @@ dd {
     flex-direction: column;
     align-items: flex-end;
     gap: 8px;
+  }
+  .action-items {
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 8px;
+  }
+  .actions-toggle,
+  .mobile-action {
+    display: flex;
+  }
+  .top-actions .icon-button {
+    width: auto;
+    min-width: 112px;
+    height: 44px;
+    padding: 0 14px;
+    justify-content: flex-start;
+    align-items: center;
+    gap: 10px;
+    border-radius: 14px;
+    border-color: #16323c35;
+    box-shadow: 0 5px 18px #0a20272b;
+    font-size: 19px;
+  }
+  .top-actions .icon-button::after {
+    content: attr(data-label);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+    white-space: nowrap;
+  }
+  .top-actions.actions-collapsed .action-items {
+    display: none;
+  }
+  .top-actions.actions-collapsed .actions-toggle {
+    width: 44px;
+    min-width: 44px;
+    padding: 0;
+    justify-content: center;
+    border-radius: 50%;
+  }
+  .top-actions.actions-collapsed .actions-toggle::after {
+    display: none;
   }
   .brand-mark {
     width: 38px;

@@ -30,35 +30,64 @@
             <p>A LITTLE ISLAND. AN OPEN ROAD.</p>
           </div>
         </div>
-        <div class="top-actions">
+        <div class="top-actions actions-collapsed">
+          <button
+            id="actions-toggle"
+            class="icon-button actions-toggle"
+            type="button"
+            data-label="Controls"
+            aria-controls="mobile-actions"
+            aria-expanded="false"
+            aria-label="Open driving controls"
+          >
+            ☰</button
+          >
+          <div id="mobile-actions" class="action-items">
           <span class="country">SG <span>01° N · 103° E</span></span
           ><button
             id="spawn-picker"
             class="icon-button"
+            data-label="Choose start"
             aria-label="Choose a starting road"
           >
             🗺️</button
           ><button
             id="night-toggle"
             class="icon-button"
+            data-label="Night mode"
             aria-label="Enable night mode"
           >
             🌙</button
           ><button
             id="hud-toggle"
             class="icon-button"
+            data-label="Hide interface"
             aria-label="Hide driving interface"
           >
             👁️</button
           ><button
+            id="view-toggle"
+            class="icon-button mobile-action"
+            data-label="Driver view"
+            aria-label="Switch to driver view"
+          >
+            ◉</button
+          ><button
             id="help"
             class="icon-button"
+            data-label="Help"
             aria-label="Controls and map information"
           >
             ?</button
-          ><button id="pause" class="icon-button" aria-label="Pause driving">
+          ><button
+            id="pause"
+            class="icon-button"
+            data-label="Pause"
+            aria-label="Pause driving"
+          >
             Ⅱ
           </button>
+          </div>
         </div>
       </header>
       <section class="location glass" aria-label="Current location">
