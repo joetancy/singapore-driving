@@ -964,6 +964,10 @@ dd {
   box-shadow: 0 4px 18px #102e3430;
 }
 .view-label { font-size: 12px; font-weight: 700; white-space: nowrap; }
+.top-actions .mode-button { display: flex; align-items: center; gap: 8px; width: auto; min-height: 44px; padding: 0 12px; }
+.mode-label { font-size: 12px; font-weight: 700; white-space: nowrap; }
+.top-actions .mode-button::after { content: none; }
+.mode-button[aria-pressed="true"] { background: #163d43; color: #effff9; }
 .top-actions .view-button::after { content: none; }
 .icon-button:focus-visible { outline: 3px solid #43cbaa; outline-offset: 3px; }
 @media (max-width: 760px) {

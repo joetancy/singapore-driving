@@ -57,11 +57,11 @@
             🗺️</button
           ><button
             id="night-toggle"
-            class="icon-button"
-            data-label="Night mode"
-            aria-label="Enable night mode"
+            class="icon-button mode-button"
+            aria-label="Enable dark mode"
+            aria-pressed="false"
           >
-            🌙</button
+            <span aria-hidden="true">☾</span><span class="mode-label">Dark mode: Off</span></button
           ><button
             id="hud-toggle"
             class="icon-button"
@@ -76,14 +76,7 @@
             aria-label="Controls and map information"
           >
             ?</button
-          ><button
-            id="pause"
-            class="icon-button"
-            data-label="Pause"
-            aria-label="Pause driving"
           >
-            Ⅱ
-          </button>
           </div>
         </div>
       </header>
@@ -200,8 +193,6 @@
           <dd>Toggle driver view</dd>
           <dt>R</dt>
           <dd>Reset to the starting road</dd>
-          <dt>Esc</dt>
-          <dd>Pause / resume</dd>
         </dl>
         <div class="data-note">
           <strong id="info-data-title">About this demo map</strong>
@@ -214,7 +205,7 @@
             simplified.
           </p>
         </div>
-        <button id="resume" class="primary-button">
+        <button id="back-to-road" class="primary-button">
           Back to the road <span>↗</span>
         </button>
       </dialog>

@@ -30,7 +30,7 @@ export function touchesPolygon(x, z, rings, radius = 1.15) {
     r.some((a, i) => nearestPoint(x, z, a, r[(i + 1) % r.length]).d < radius),
   );
 }
-export function stepCar(state, input, dt, onRoad = true) {
+export function stepCar(state, input, dt) {
   const throttle = input.forward ? 1 : 0,
     brake = input.back ? 1 : 0,
     handbrake = !!input.handbrake;
@@ -41,9 +41,8 @@ export function stepCar(state, input, dt, onRoad = true) {
     accel = -Math.sign(state.speed) * (1.25 + Math.abs(state.speed) * 0.018);
   if (handbrake) accel -= Math.sign(state.speed) * 22;
   accel -= state.speed * Math.abs(state.speed) * 0.0014;
-  if (!onRoad) accel -= state.speed * 0.65;
   const before = state.speed;
-  state.speed = clamp(state.speed + accel * dt, -8.3, onRoad ? 250 / 3.6 : 9);
+  state.speed = clamp(state.speed + accel * dt, -8.3, 250 / 3.6);
   if (!throttle && !brake && before * state.speed < 0) state.speed = 0;
   if (Math.abs(state.speed) < 0.05 && !throttle && !brake) state.speed = 0;
   const desired = (input.right ? 1 : 0) - (input.left ? 1 : 0);
