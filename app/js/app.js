@@ -109,7 +109,7 @@ function createChunk(data) {
     bridgeGeo = [],
     roadGeo = [],
     pavementGeo = [],
-    markGeo = [], tunnelGeo = [], lampGeo = [], lampHeadGeo = [], signalGeo = [], signalRedGeo = [], signalAmberGeo = [], signalGreenGeo = [],
+    markGeo = [], stopGeo = [], tunnelGeo = [], lampGeo = [], lampHeadGeo = [], signalGeo = [], signalRedGeo = [], signalAmberGeo = [], signalGreenGeo = [],
     segments = [],
     lampPoints = [],
     blocks = [],
@@ -193,6 +193,16 @@ function createChunk(data) {
         pavementGeo.push(ribbon(a, b, width + 4, 0.025, "#b4bdb8"));
         roadGeo.push(ribbon(a, b, width, 0.065, "#48575b"));
         const interpolate = (t) => a.map((v, j) => v + (b[j] - v) * t);
+        const stopLine = (p) => stopGeo.push(quad(
+          [p[0] + p[4] * width / 2, p[1] + p[5] * width / 2],
+          [p[0] - p[4] * width / 2, p[1] - p[5] * width / 2],
+          0.22, p[2] + 0.095, "#f4f3e6"));
+        if (!segment.tunnel) {
+          if (i === 0 && (props.connections?.start?.length || 0) > 1)
+            stopLine(interpolate(Math.min(6 / len, 0.4)));
+          if (i === pts.length - 2 && (props.connections?.end?.length || 0) > 1)
+            stopLine(interpolate(1 - Math.min(6 / len, 0.4)));
+        }
         const lanes = props.laneLayout;
         const dividers = lanes?.total > 1 ? Array.from({ length: lanes.total - 1 }, (_, n) =>
           (n + 1 - lanes.total / 2) * width / lanes.total) : [];
@@ -275,6 +285,7 @@ function createChunk(data) {
   mergeInto(group, tunnelGeo, worldMaterials.tunnel);
   mergeInto(group, roadGeo.filter(Boolean), worldMaterials.road);
   mergeInto(group, markGeo.filter(Boolean), worldMaterials.mark);
+  mergeInto(group, stopGeo.filter(Boolean), worldMaterials.mark);
   mergeInto(group, lampGeo, worldMaterials.lamp);
   mergeInto(group, lampHeadGeo, worldMaterials.lampHead);
   mergeInto(group, signalGeo, worldMaterials.signal);
