@@ -18,15 +18,20 @@ export function createTraffic(scene) {
     part(spec.width, spec.height * 0.55, spec.length, 0, spec.height * 0.45, 0, bodyMaterials[type]);
     if (type === 'motorcycle') {
       part(0.45, 0.75, 0.55, 0, 1.05, 0, rubber);
+    } else if (type === 'doubleDecker') {
+      part(spec.width * 0.86, spec.height * 0.2, spec.length * 0.88, 0, spec.height * 0.72, 0, glass);
+      part(spec.width * 0.86, spec.height * 0.2, spec.length * 0.88, 0, spec.height * 0.42, 0, glass);
     } else if (type === 'lorry') {
       part(spec.width * 0.98, 1.9, spec.length * 0.65, 0, 1.6, 0.8, bodyMaterials[type]);
       part(spec.width * 0.85, 0.6, 1.3, 0, 1.9, -spec.length * 0.35, glass);
     } else {
       part(spec.width * 0.86, spec.height * 0.4, spec.length * (type === 'bus' ? 0.88 : 0.55), 0, spec.height * 0.82, 0, glass);
     }
-    for (const z of [-spec.length * 0.32, spec.length * 0.32])
+    if (type === 'taxi') part(0.42, 0.12, 0.2, 0, spec.height + 0.18, 0, light);
+    const axles = spec.length > 8 ? [-0.36, 0.08, 0.4] : [-0.32, 0.32];
+    for (const f of axles)
       for (const side of type === 'motorcycle' ? [0] : [-1, 1])
-        part(0.22, 0.55, 0.55, side * spec.width * 0.49, 0.3, z, rubber);
+        part(0.22, 0.55, 0.55, side * spec.width * 0.49, 0.3, f * spec.length, rubber);
     for (const side of [-1, 1]) part(0.2, 0.15, 0.05, side * spec.width * 0.3, 0.7, -spec.length / 2 - 0.02, light);
     scene.add(group); return group;
   }
@@ -46,7 +51,7 @@ export function createTraffic(scene) {
     while (vehicles.length > target) remove(vehicles.length - 1);
   }
   function spawn(player) {
-    const types = ['car', 'car', 'car', 'bus', 'motorcycle', 'motorcycle', 'lorry'];
+    const types = ['car', 'car', 'car', 'taxi', 'taxi', 'bus', 'doubleDecker', 'motorcycle', 'motorcycle', 'lorry'];
     const type = types[Math.floor(Math.random() * types.length)], spec = VEHICLES[type];
     for (let attempt = 0; attempt < 35 && roads.length; attempt++) {
       const road = roads[Math.floor(Math.random() * roads.length)];

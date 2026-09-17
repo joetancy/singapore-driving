@@ -1,6 +1,8 @@
 export const VEHICLES = {
   car: { width: 1.8, length: 4.2, height: 1.4, mass: 1400, speed: 15, color: 0x5ba7bd },
+  taxi: { width: 1.8, length: 4.4, height: 1.45, mass: 1450, speed: 16, color: 0x2456a6 },
   bus: { width: 2.4, length: 10, height: 3, mass: 11000, speed: 11, color: 0x80bf49 },
+  doubleDecker: { width: 2.5, length: 12, height: 4.4, mass: 18000, speed: 10, color: 0x35a05a },
   motorcycle: { width: 0.7, length: 2, height: 1.3, mass: 240, speed: 17, color: 0xe5ab43 },
   lorry: { width: 2.3, length: 7, height: 2.8, mass: 7000, speed: 12, color: 0xc4b9a5 },
 };

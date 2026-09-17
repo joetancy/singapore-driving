@@ -26,6 +26,16 @@ for (const [type, spec] of Object.entries(VEHICLES)) {
 }
 assert(!collideVehicles({...VEHICLES.car, x:0,y:0,z:0,yaw:0,speed:20}, {...VEHICLES.bus,x:0,y:-4,z:0,yaw:0,speed:0}), 'No collisions between stacked levels');
 assert(!collideVehicles({...VEHICLES.car, x:0,y:0,z:0,yaw:0,speed:20}, {...VEHICLES.car,x:8,y:0,z:0,yaw:0,speed:0}));
+// Singapore variants: blue taxis at car scale, green double-deckers too
+// tall for tunnel approaches (caught by the height rule in spawn).
+for (const key of ['taxi', 'doubleDecker']) {
+  const spec = VEHICLES[key];
+  for (const field of ['width', 'length', 'height', 'mass', 'speed', 'color'])
+    assert(Number.isFinite(spec[field]) && spec[field] > 0, `${key}.${field}`);
+}
+assert(VEHICLES.taxi.width <= 1.9 && VEHICLES.taxi.color !== VEHICLES.car.color);
+assert(VEHICLES.doubleDecker.height > 2.8 && VEHICLES.doubleDecker.length > VEHICLES.bus.length);
+assert(VEHICLES.doubleDecker.color !== VEHICLES.bus.color);
 console.log('Traffic routing, lane direction, density, and vehicle collision checks passed');
 
 // Exercise real Three.js traffic meshes, gradual spawning, and immediate Off.
