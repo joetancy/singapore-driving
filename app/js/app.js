@@ -45,6 +45,8 @@ let renderer,
   sunLight,
   nightLights = [];
 let roads = [],
+  headlight,
+  headlightTarget,
   obstacles = [],
   waterPolygons = [],
   boundaryPolygons = [],
@@ -94,6 +96,7 @@ function setNight(value) {
   skyLight.intensity = night ? 0.7 : 2.25;
   sunLight.color.set(night ? "#91b7ff" : "#fff0cb");
   sunLight.intensity = night ? 0.45 : 3;
+  if (headlight) headlight.intensity = night ? 3 : 0;
   worldMaterials.water?.color.set(night ? "#173d65" : "#4f939a");
   if (worldMaterials.lampGlow)
     worldMaterials.lampGlow.opacity = night ? 0.3 : 0;
@@ -1051,6 +1054,14 @@ function animate() {
   }
   car.position.set(state.x, smoothGround + 0.08, state.z);
   car.rotation.y = -state.yaw;
+  const hdx = Math.sin(state.yaw), hdz = -Math.cos(state.yaw);
+  headlight.position.set(state.x + hdx * 1.5, smoothGround + 1.4, state.z + hdz * 1.5);
+  headlightTarget.position.set(state.x + hdx * 25, smoothGround + 1, state.z + hdz * 25);
+  const targetFov = 60 + Math.min(10, Math.abs(state.speed) * 0.15);
+  if (Math.abs(camera.fov - targetFov) > 0.05) {
+    camera.fov += (targetFov - camera.fov) * (1 - Math.exp(-3 * dt));
+    camera.updateProjectionMatrix();
+  }
   const slope = activeRoad ? (activeRoad.b[2] - activeRoad.a[2]) /
     Math.hypot(activeRoad.b[0] - activeRoad.a[0], activeRoad.b[1] - activeRoad.a[1]) : 0;
   const alignment = activeRoad ? (Math.sin(state.yaw) * (activeRoad.b[0] - activeRoad.a[0]) -
@@ -1129,6 +1140,10 @@ async function init() {
     sunLight.name = "sun";
     sunLight.target = sunTarget;
     scene.add(sunLight, sunTarget);
+    headlight = new THREE.SpotLight("#ffedd0", 0, 70, 0.5, 0.5, 1.5);
+    headlightTarget = new THREE.Object3D();
+    headlight.target = headlightTarget;
+    scene.add(headlight, headlightTarget);
     const groundMaterial = new THREE.MeshStandardMaterial({
       color: "#9daa94",
       roughness: 1,
