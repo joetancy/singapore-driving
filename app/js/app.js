@@ -12,7 +12,7 @@ import {
 } from "./geometry.js";
 import { loadPreferences, saveNight, saveSpawn, loadTraffic, saveTraffic } from "./storage.js";
 import { createTraffic } from "./traffic.js";
-import { roadIndex, surfaceAt, sampleHeight, drivingContact, retainElevated, pickNightLights, widthAt, stopLines } from "./roads.js";
+import { roadIndex, surfaceAt, sampleHeight, drivingContact, retainElevated, pickNightLights, widthAt, stopLines, hatchBars } from "./roads.js";
 import { createSpawnPicker } from "./spawn-map.js";
 import {
   clamp,
@@ -315,6 +315,15 @@ function createChunk(data) {
         if (!atJunction(a[3]) && !atJunction(b[3])) for (const side of [-1, 1]) {
           if (layout[side === -1 ? "right" : "left"]) continue;
           markGeo.push(ribbon(a, b, 0.12, 0.09, "#d3c990", [side * (wa / 2 - 0.3), side * (wb / 2 - 0.3)]));
+        }
+        if (layout.junction && !segment.tunnel) for (const bar of hatchBars(a[3], b[3])) {
+          const s = bar.flip ? 1 : -1;
+          const wLo = widthAt(tapers, bar.lo, width) / 2 - 0.35;
+          const wHi = widthAt(tapers, bar.hi, width) / 2 - 0.35;
+          markGeo.push(ribbon(
+            interpolate((bar.lo - a[3]) / (b[3] - a[3])),
+            interpolate((bar.hi - a[3]) / (b[3] - a[3])), 0.18, 0.09, "#d8b93a",
+            [s * wLo, -s * wHi]));
         }
         const spacing = { motorway: 50, trunk: 45, primary: 45 }[props.highway] || 40;
         if (lampsAllowed && uncovered && !segment.tunnel && !layout.noLamps) for (let d = Math.ceil((a[3] + 0.01) / spacing) * spacing; d < b[3] - 0.01; d += spacing) {

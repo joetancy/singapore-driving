@@ -117,6 +117,22 @@ export function widthAt(tapers, d, width) {
   return width;
 }
 
+// Box-junction cross-hatch bars for one sample pair: diagonal bars every
+// spacing metres, alternating direction for the criss-cross read,
+// deterministic from absolute distances so chunk reloads never restart the
+// pattern. Returns [{lo, hi, flip}] distances clamped to the pair.
+export function hatchBars(a3, b3, spacing = 5, barLen = 2.4) {
+  const bars = [];
+  const start = Math.floor(a3 / spacing) * spacing;
+  let k = 0;
+  for (let d = start; d < b3 - 0.4; d += spacing, k++) {
+    const lo = Math.max(d, a3), hi = Math.min(d + barLen, b3);
+    if (hi - lo < 0.5) continue;
+    bars.push({ lo, hi, flip: k % 2 === 1 });
+  }
+  return bars;
+}
+
 // Stop-line bars for a signalized approach: one transverse segment per
 // legal travel direction, 2 m upstream of the signal node and spanning that
 // direction's lanes (left-hand traffic: forward lanes sit left of the OSM

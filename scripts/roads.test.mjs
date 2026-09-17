@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { PREPARED_ROAD_SCHEMA_VERSION, prepareAssets, surfacePolygon, taperZones } from "./prepare.mjs";
 import { prepareRoads, roadVisible, laneLayout, nominalHeight } from "./road-network.mjs";
-import { roadIndex, surfaceAt, retainElevated, pastSegmentEnd, pickNightLights, widthAt, stopLines } from "../app/js/roads.js";
+import { roadIndex, surfaceAt, retainElevated, pastSegmentEnd, pickNightLights, widthAt, stopLines, hatchBars } from "../app/js/roads.js";
 
 const center = [103.85, 1.29];
 const features = [
@@ -399,3 +399,15 @@ assert.equal(reverseStops.length, 1);
 assert.deepEqual([reverseStops[0].ax, reverseStops[0].az], [2, 5]);
 assert.equal(stopLines(0, 0, 0, 10, 0, 10, null).length, 2);
 console.log("signal stop line checks passed");
+
+// Box-junction hatching tiles pairs deterministically with alternating
+// diagonals, clamped to pair bounds.
+const bars = hatchBars(0, 12);
+assert.deepEqual(bars.map((b) => [b.lo, b.hi]), [[0, 2.4], [5, 7.4], [10, 12]]);
+assert.deepEqual(bars.map((b) => b.flip), [false, true, false]);
+assert.deepEqual(hatchBars(3, 14).map((b) => b.lo), [5, 10]);
+assert.deepEqual(hatchBars(0, 1), [{ lo: 0, hi: 1, flip: false }]);
+assert.deepEqual(hatchBars(5, 5), []);
+const offset = hatchBars(2, 9);
+assert.deepEqual(offset.map((b) => [b.lo, b.hi, b.flip]), [[5, 7.4, true]], "Phase follows absolute distance");
+console.log("junction hatch checks passed");
