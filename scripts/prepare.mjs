@@ -14,9 +14,36 @@ import { prepareLayout } from "./road-layout.mjs";
 
 // Increment when derived road output changes shape or meaning; the build
 // writes this into the manifest and requires a complete rebuild on mismatch.
-export const PREPARED_ROAD_SCHEMA_VERSION = 7;
+export const PREPARED_ROAD_SCHEMA_VERSION = 9;
 
 const sourceId = (id) => String(id).replace(/-\d+-\d+$/, "");
+
+// Cosine easing for lane-merge tapers: zero slope at both ends so neither
+// the narrowed boundary nor the full-width interior shows a kink.
+const ease = (t) => 0.5 - 0.5 * Math.cos(Math.PI * Math.min(1, Math.max(0, t)));
+
+// Width transition zones for one feature. Where a degree-1 continuation is
+// narrower, only this (wider) side tapers down to meet it, so the shared
+// boundary always matches exactly. Zones use absolute sample distances:
+// [{d0, d1, w0, w1}]. Junction ends (multiple continuations) and dead ends
+// keep full width; each zone is capped at half the feature length so the
+// two ends never overlap.
+export function taperZones(samples, width, startNeighbor, endNeighbor) {
+  const zones = [];
+  if (!samples || samples.length < 2) return zones;
+  const first = samples[0][3], last = samples[samples.length - 1][3];
+  const len = last - first;
+  if (!(len > 0)) return zones;
+  for (const [neighbor, atStart] of [[startNeighbor, true], [endNeighbor, false]]) {
+    if (neighbor == null || width <= neighbor || width - neighbor <= 0.05) continue;
+    const L = Math.min(Math.max(8, Math.min(30, (width - neighbor) * 8)), len / 2);
+    if (!(L > 0)) continue;
+    zones.push(atStart
+      ? { d0: first, d1: first + L, w0: neighbor, w1: width }
+      : { d0: last - L, d1: last, w0: width, w1: neighbor });
+  }
+  return zones;
+}
 
 export function prepareAssets(features, center) {
   const prepared = prepareRoads(features, center);
@@ -41,10 +68,18 @@ export function prepareAssets(features, center) {
       sourceId: source,
       width,
       samples,
+      tapers: [],
       layout: layout.segments.get(f.id) || [],
       connections: prepared.connections.get(f.id) || { start: [], end: [] },
       laneLayout: laneLayout(f.properties),
     });
+  }
+  const byId = new Map(roads.map((r) => [r.id, r]));
+  for (const r of roads) {
+    const startLinks = r.connections.start || [], endLinks = r.connections.end || [];
+    const startNeighbor = startLinks.length === 1 ? byId.get(startLinks[0])?.width : null;
+    const endNeighbor = endLinks.length === 1 ? byId.get(endLinks[0])?.width : null;
+    r.tapers = taperZones(r.samples, r.width, startNeighbor ?? null, endNeighbor ?? null);
   }
   return {
     version: PREPARED_ROAD_SCHEMA_VERSION,

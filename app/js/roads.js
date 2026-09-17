@@ -105,6 +105,29 @@ export function pastSegmentEnd(r, x, z, margin = 0.6) {
   return along < -margin || along > length + margin;
 }
 
+// Width within a lane-merge taper zone (absolute sample distances, cosine
+// easing); the feature width outside zones. Zones never overlap, so the
+// first match wins.
+export function widthAt(tapers, d, width) {
+  for (const t of tapers || []) {
+    if (d < t.d0 || d > t.d1) continue;
+    const s = (d - t.d0) / (t.d1 - t.d0 || 1);
+    return t.w0 + (t.w1 - t.w0) * (0.5 - 0.5 * Math.cos(Math.PI * s));
+  }
+  return width;
+}
+
+// Night lighting budget: at most eight non-shadow-casting lights for the
+// nearest lamp heads within 100 m.
+export function pickNightLights(lamps, x, z, limit = 8, radius = 100) {
+  return lamps
+    .map((p) => ({ p, d: Math.hypot(p[0] - x, p[2] - z) }))
+    .filter(({ d }) => d <= radius)
+    .sort((a, b) => a.d - b.d)
+    .slice(0, limit)
+    .map(({ p }) => p);
+}
+
 // Losing contact on an elevated deck driven past its end (or into a chunk
 // that has not loaded yet) must retain the last supported position and
 // height instead of snapping to ground level. Lateral departures off the

@@ -33,6 +33,11 @@ for (const c of chunks) {
     f.properties.connections = road.connections;
     f.properties.sourceId = road.sourceId;
     f.properties.width = road.width;
+    if (road.tapers?.length) {
+      const round = (v) => Number(v.toFixed(3));
+      f.properties.tapers = road.tapers.map((t) =>
+        ({ d0: round(t.d0), d1: round(t.d1), w0: round(t.w0), w1: round(t.w1) }));
+    }
     f.properties.laneLayout = road.laneLayout;
     const entry = { id: f.id, name: f.properties.name || "Local road", highway: f.properties.highway,
       width: road.width, laneLayout: road.laneLayout,
