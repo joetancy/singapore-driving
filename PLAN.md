@@ -42,7 +42,9 @@
 - Replace the unconditional “on road means no building collision” bypass with checks against prepared geometry. Preserve off-road building,
     boundary, and water protection.
 
-- Keep off-road ground driving with its existing speed penalty. Do not turn all road edges into invisible walls.
+- Keep off-road ground driving penalty-free, per PR #6 (which removed all
+    off-road penalties) and the road-test lock-in. Free-drive stays the
+    default; do not turn road edges into invisible walls.
 
   Acceptance: a road crossing an erroneous building footprint is visibly open and driveable; the remaining building still blocks the car. A tunnel
   beneath that building does not remove its surface footprint.
