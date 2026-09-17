@@ -2,11 +2,12 @@ import { nearestPoint } from "./physics.js";
 
 export const sampleHeight = (r, t) => r.a[2] + (r.b[2] - r.a[2]) * t;
 
-// Lost lateral contact must not turn an underground car into a ground-level
-// car. Slide along the last tunnel surface; keep speed and steering unchanged.
+// Road-edge guards keep the player in the current carriageway. They preserve
+// speed and steering, so hitting a guard is a physical boundary rather than
+// an off-road slowdown. A connected road is still preferred when available.
 export function drivingContact(index, state, active, height) {
   const contact = surfaceAt(index, state.x, state.z, active, height);
-  if (contact || !active?.tunnel) return contact;
+  if (contact || !active) return contact;
   const p = nearestPoint(state.x, state.z, active.a, active.b);
   const dx = state.x - p.x, dz = state.z - p.z;
   const radius = Math.max(0, active.width / 2 - 1.1);

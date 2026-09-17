@@ -2,6 +2,7 @@ import * as THREE from "../../public/vendor/three.module.js";
 import {
   colourGeometry,
   ribbon,
+  taperedRibbon,
   deck,
   mergeInto,
   polygonShape,
@@ -161,6 +162,7 @@ function createChunk(data) {
   const group = new THREE.Group(),
     buildingGeo = [],
     bridgeGeo = [],
+    guardGeo = [],
     roadGeo = [],
     tunnelRoadGeo = [],
     pavementGeo = [],
@@ -224,14 +226,17 @@ function createChunk(data) {
       if (!pts?.length) throw new Error("Road assets require npm run build");
       const startDistance = pts[0][3], endDistance = pts[pts.length - 1][3];
       const lampsAllowed = !props.layout?.some(section => section.noLamps || section.junction);
-      const atJunction = (d) =>
+      const junctions = props.junctions || {},
+        atJunction = (d) =>
         (props.connections?.start?.length > 1 && d - startDistance < 14) ||
         (props.connections?.end?.length > 1 && endDistance - d < 14);
       for (let i = 0; i < pts.length - 1; i++) {
         const a = pts[i], b = pts[i + 1], len = Math.hypot(b[0] - a[0], b[1] - a[1]);
         if (len < 0.01) continue;
         const layout = props.layout?.[i] || {};
-        const segment = { a, b, width, y: a[2], id: f.id + ":" + i,
+        const startWidth = i === 0 ? Math.max(width, junctions.start?.width || 0) : width,
+          endWidth = i === pts.length - 2 ? Math.max(width, junctions.end?.width || 0) : width,
+          segment = { a, b, width: Math.max(startWidth, endWidth), y: a[2], id: f.id + ":" + i,
           name: props.name || "Local road", oneway: props.oneway,
           source: props.sourceId || String(f.id).replace(/-\d+-\d+$/, ""), featureId: f.id,
           connections: [...(props.connections?.start || []), ...(props.connections?.end || [])],
@@ -254,9 +259,9 @@ function createChunk(data) {
             bridgeGeo.push(pier);
           }
         }
-        pavementGeo.push(ribbon(a, b, width + 1.4, 0.025, "#b4bdb8"));
+        pavementGeo.push(taperedRibbon(a, b, startWidth + 1.4, endWidth + 1.4, 0.025, "#b4bdb8"));
         (underground ? tunnelRoadGeo : roadGeo).push(
-          ribbon(a, b, width, 0.065, underground ? "#252d31" : "#48575b"),
+          taperedRibbon(a, b, startWidth, endWidth, 0.065, underground ? "#252d31" : "#48575b"),
         );
         if (!layout.junction) addTunnelPortal(a, b, width, portalGeo, portalInsetGeo);
         const interpolate = (t) => a.map((v, j) => v + (b[j] - v) * t);
@@ -288,6 +293,13 @@ function createChunk(data) {
           if (layout[side === -1 ? "right" : "left"]) continue;
           markGeo.push(ribbon(a, b, 0.12, 0.09, "#d3c990", side * (width / 2 - 0.3)));
         }
+        // Roadside lane guards: they are most useful on fast roads, ramps and
+        // tunnel approaches. The contact code above provides their collision.
+        if (/^(motorway|trunk)/.test(props.highway || "") || /_link$/.test(props.highway || "") || segment.tunnel)
+          for (const side of [-1, 1]) {
+            if (layout[side === -1 ? "right" : "left"]) continue;
+            guardGeo.push(deck(a, b, 0.14, 0, 0.75, side * (width / 2 + 0.65)));
+          }
         const spacing = { motorway: 50, trunk: 45, primary: 45 }[props.highway] || 40;
         if (lampsAllowed && !segment.tunnel && !layout.noLamps) for (let d = Math.ceil((a[3] + 0.01) / spacing) * spacing; d < b[3] - 0.01; d += spacing) {
           if (atJunction(d)) continue;
@@ -371,6 +383,7 @@ function createChunk(data) {
   }
   mergeInto(group, pavementGeo.filter(Boolean), worldMaterials.pavement);
   mergeInto(group, bridgeGeo, worldMaterials.bridge);
+  mergeInto(group, guardGeo, worldMaterials.guard);
   mergeInto(group, tunnelGeo, worldMaterials.tunnel);
   mergeInto(group, roadGeo.filter(Boolean), worldMaterials.road);
   mergeInto(group, tunnelRoadGeo.filter(Boolean), worldMaterials.tunnelRoad);
@@ -1104,6 +1117,11 @@ async function init() {
       color: "#718184",
       roughness: 0.9,
     });
+    worldMaterials.guard = new THREE.MeshStandardMaterial({
+      color: "#7d8889",
+      roughness: 0.72,
+      metalness: 0.28,
+    });
     worldMaterials.tunnel = new THREE.MeshStandardMaterial({
       color: "#5d6668",
       roughness: 1,
@@ -1225,9 +1243,15 @@ async function init() {
     $("loading-message").textContent = "Loading the neighbourhood…";
     await streamChunks(true);
     car = createCar();
-    traffic = createTraffic(scene);
-    traffic.syncRoads(roads);
-    traffic.density(loadTraffic());
+    try {
+      traffic = createTraffic(scene);
+      traffic.syncRoads(roads);
+      traffic.density(loadTraffic());
+    } catch (trafficError) {
+      console.error("Traffic startup failed", trafficError);
+      traffic = null;
+      toast("Traffic is unavailable — driving continues");
+    }
     setupMinimap();
     resetCar(false);
     setNight(night);
@@ -1248,7 +1272,7 @@ async function init() {
     animate();
     canvas.addEventListener("webglcontextlost", (e) => {
       e.preventDefault();
-      setPaused(true);
+      clearDrivingInput();
       $("loading").classList.remove("hidden");
       $("loading-message").textContent =
         "The graphics context was interrupted. Reload the page to resume.";

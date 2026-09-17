@@ -154,6 +154,13 @@ assert(!isolated.segments.get('lower')[0].noLamps);
 const openPassage = tunnelPassage([0, 0, -4, 0, 0, 1], [10, 0, -4, 10, 0, 1], 12, 3.5, { left: true });
 assert.equal(openPassage.attributes.position.count, 12); // Remaining wall and roof.
 openPassage.dispose();
+const { taperedRibbon } = await import('../app/js/geometry.js');
+const taper = taperedRibbon([0, 0, 0, 0, 0, 1], [10, 0, 0, 10, 0, 1], 6, 12, 0, '#fff');
+const taperPositions = taper.attributes.position;
+assert.equal(taperPositions.count, 6);
+assert.equal(Math.abs(taperPositions.getZ(0)), 3);
+assert.equal(Math.abs(taperPositions.getZ(1)), 6);
+taper.dispose();
 console.log('ramp joins, portal thresholds, widths and global overlap checks passed');
 
 // Height propagation must follow a bending slip road, not stop at a 30° turn.

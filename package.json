@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "check": "node --check app/js/app.js && node --check app/js/geometry.js && node --check app/js/physics.js && node --check app/js/storage.js && node --check app/js/roads.js && node --check app/js/spawn-map.js && node --check scripts/road-network.mjs && node --check scripts/road-layout.mjs",
+    "check": "node --check app/js/app.js && node --check app/js/geometry.js && node --check app/js/physics.js && node --check app/js/storage.js && node --check app/js/roads.js && node --check app/js/spawn-map.js && node --check app/js/traffic.js && node --check app/js/traffic-sim.js && node --check scripts/road-network.mjs && node --check scripts/road-layout.mjs",
     "test": "node scripts/roads.test.mjs && node scripts/traffic.test.mjs"
   }
 }

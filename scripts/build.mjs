@@ -20,6 +20,7 @@ const chunks = manifest.chunks.map((c) => ({
 const roadFeatures = chunks.flatMap((c) => c.data.features.filter((f) => f.geometry.type === "LineString"));
 const prepared = prepareRoads(roadFeatures, manifest.center);
 const layout = prepareLayout(roadFeatures, prepared.samples);
+const roadsById = new Map(roadFeatures.map(feature => [feature.id, feature]));
 console.log(`Suppressed street lamps on ${layout.overlaps} overlapping road samples.`);
 const overview = [];
 mkdirSync(resolve(output, "data/map"), { recursive: true });
@@ -35,6 +36,12 @@ for (const c of chunks) {
     f.properties.sourceId = String(f.id).replace(/-\d+-\d+$/, "");
     f.properties.width = layout.widths.get(f.properties.sourceId) ?? roadWidth(f.properties);
     f.properties.laneLayout = laneLayout(f.properties);
+    const end = (which) => (f.properties.connections?.[which] || [])
+      .map(id => roadsById.get(id))
+      .filter(Boolean)
+      .map(other => ({ width: layout.widths.get(String(other.id).replace(/-\d+-\d+$/, "")) ?? roadWidth(other.properties), lanes: laneLayout(other.properties).total }))
+      .sort((a, b) => b.width - a.width)[0];
+    f.properties.junctions = { start: end("start"), end: end("end") };
     const road = { id: f.id, name: f.properties.name || "Local road", highway: f.properties.highway,
       width: f.properties.width, laneLayout: f.properties.laneLayout,
       samples: f.properties.samples.map((p) => p.slice(0, 4)) };

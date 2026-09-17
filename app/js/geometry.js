@@ -91,6 +91,20 @@ export function ribbon(a, b, width, offset, color, lateral = 0) {
   return colourGeometry(geometry, color);
 }
 
+// A tapered road polygon fills the corner where a road gains or loses lanes.
+// It shares the same centreline and normals as its neighbours, so there is no
+// sliver at a widened expressway merge or a narrowing off-ramp.
+export function taperedRibbon(a, b, widthA, widthB, offset, color) {
+  const edge = (p, side, width) => [p[0] + p[4] * side * width / 2,
+    p[2] + offset, p[1] + p[5] * side * width / 2];
+  const al = edge(a, 1, widthA), ar = edge(a, -1, widthA);
+  const bl = edge(b, 1, widthB), br = edge(b, -1, widthB);
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute([...al, ...bl, ...ar, ...bl, ...br, ...ar], 3));
+  geometry.computeVertexNormals();
+  return colourGeometry(geometry, color);
+}
+
 export function deck(a, b, width, bottom = -0.7, top = 0.01, lateral = 0) {
   const vertices = [];
   for (const p of [a, b]) for (const y of [bottom, top]) for (const side of [-1, 1])
