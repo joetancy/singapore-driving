@@ -148,3 +148,28 @@ export function trafficSignal(px, pz, groundY, dx, dz, width) {
   });
   return { housing: [pole, housing], lamps };
 }
+
+// Roadside bus shelter running parallel to the road, left of the OSM way
+// direction: roof on two poles, bench with backrest, and a stop sign at the
+// upstream end. Plain geometries merge into a metal material; pure for
+// testability. Returns the part list.
+export function busShelter(px, pz, groundY, dx, dz, width) {
+  const len = Math.hypot(dx, dz) || 1;
+  const ux = dx / len, uz = dz / len;
+  const x = px - uz * (width / 2 + 2.2), z = pz + ux * (width / 2 + 2.2);
+  const yaw = Math.atan2(ux, uz);
+  const parts = [];
+  const box = (w, h, d, along, up, left) => {
+    const g = new THREE.BoxGeometry(w, h, d);
+    g.rotateY(yaw);
+    g.translate(x + ux * along - uz * left, groundY + up, z + uz * along + ux * left);
+    parts.push(g);
+  };
+  box(1.7, 0.08, 3.6, 0, 2.55, 0);
+  for (const a of [-1.5, 1.5]) box(0.09, 2.55, 0.09, a, 1.275, 0);
+  box(0.45, 0.07, 2.6, 0, 0.62, 0);
+  box(0.07, 0.5, 2.6, 0, 0.95, 0.35);
+  box(0.07, 2.6, 0.07, -2.2, 1.3, 0);
+  box(0.5, 0.35, 0.06, -2.2, 2.4, 0);
+  return parts;
+}

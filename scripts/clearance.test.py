@@ -63,12 +63,19 @@ def main():
             way(205, [70, 71, 72, 73, 70], {"building": "yes"}),
             {"type": "relation", "id": 400, "tags": {"building": "yes"},
              "members": [{"type": "way", "ref": 300, "role": "outer"}, {"type": "way", "ref": 301, "role": "inner"}]},
+            {"type": "node", "id": 90, "lon": 103.8498, "lat": 1.28404,
+             "tags": {"highway": "bus_stop", "name": "Test Stop"}},
         ]
         source, boundary_file, output = root / "source.json", root / "boundary.geojson", root / "data"
         source.write_text(json.dumps({"elements": elements}))
         boundary_file.write_text(json.dumps(boundary))
         convert(source, boundary_file, output)
         buildings = {f["id"]: f for p in output.glob("*.geojson") for f in json.loads(p.read_text())["features"] if f["properties"].get("building")}
+        stops = [f for p in output.glob("*.geojson") for f in json.loads(p.read_text())["features"] if f["properties"].get("highway") == "bus_stop"]
+        assert len(stops) == 1 and stops[0]["id"] == "node/90"
+        assert stops[0]["properties"]["name"] == "Test Stop"
+        manifest = json.loads((output / "manifest.json").read_text())
+        assert manifest["counts"]["busStops"] == 1
         # Ground road opens the footprint but splits it into disconnected parts.
         ground = buildings["way/200-0"]
         cleared = shape(ground["properties"]["clearanceGeometry"])

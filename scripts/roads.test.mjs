@@ -103,7 +103,7 @@ const crossingLevels = prepareRoads([
   road("surface-out", [junction, [103.851, 1.2901]]),
 ], center);
 assert(crossingLevels.samples.get("surface-out").every(p => p[2] === 0));
-const { tunnelPassage, trafficSignal } = await import("../app/js/geometry.js");
+const { tunnelPassage, trafficSignal, busShelter } = await import("../app/js/geometry.js");
 const passage = tunnelPassage([0, 0, -4, 0, 0, 1], [10, 0, -4, 10, 0, 1], 12);
 const positions = passage.attributes.position;
 for (let i = 0; i < positions.count; i++) assert(positions.getY(i) < 0, "Tunnel roof must stay below surface roads");
@@ -411,3 +411,30 @@ assert.deepEqual(hatchBars(5, 5), []);
 const offset = hatchBars(2, 9);
 assert.deepEqual(offset.map((b) => [b.lo, b.hi, b.flip]), [[5, 7.4, true]], "Phase follows absolute distance");
 console.log("junction hatch checks passed");
+
+// Bus shelters run parallel to the road, left of the way direction, with
+// roof, poles, bench and an upstream stop sign.
+const shelter = busShelter(0, 0, 0, 10, 0, 8);
+assert.equal(shelter.length, 7);
+assert(shelter.every((g) => [...g.attributes.position.array].every(Number.isFinite)));
+const boundsOf = (parts) => {
+  const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+  for (const g of parts) {
+    g.computeBoundingBox();
+    for (const axis of [0, 1, 2]) {
+      min[axis] = Math.min(min[axis], g.boundingBox.min[["x", "y", "z"][axis]]);
+      max[axis] = Math.max(max[axis], g.boundingBox.max[["x", "y", "z"][axis]]);
+    }
+  }
+  return { min, max };
+};
+const bounds = boundsOf(shelter);
+assert(Math.abs((bounds.min[2] + bounds.max[2]) / 2 - 6.2) < 0.01, "Shelter stands left of travel");
+assert(Math.abs(bounds.max[1] - 2.59) < 0.01, "Roof caps the shelter");
+assert(Math.abs(bounds.min[1]) < 0.01, "Poles reach the ground");
+const roofBox = shelter[0];
+roofBox.computeBoundingBox();
+assert(Math.abs((roofBox.boundingBox.max.x - roofBox.boundingBox.min.x) - 3.6) < 0.01, "Shelter runs along the road");
+const repeat = busShelter(0, 0, 0, 10, 0, 8);
+assert.equal(repeat[0].attributes.position.array[0], shelter[0].attributes.position.array[0]);
+console.log("bus shelter checks passed");

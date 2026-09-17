@@ -1,6 +1,7 @@
 w/highway
 n/highway=traffic_signals
 n/highway=crossing
+n/highway=bus_stop
 w/building
 w/building:part
 r/building

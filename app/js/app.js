@@ -9,6 +9,7 @@ import {
   quad,
   tunnelPassage,
   trafficSignal,
+  busShelter,
 } from "./geometry.js";
 import { loadPreferences, saveNight, saveSpawn, loadTraffic, saveTraffic } from "./storage.js";
 import { createTraffic } from "./traffic.js";
@@ -206,6 +207,17 @@ function createChunk(data) {
   };
   for (const f of data.features) {
     const props = f.properties || {};
+    if (f.geometry.type === "Point" && props.highway === "bus_stop") {
+      const [sx, sz] = point(f.geometry.coordinates);
+      const road = roadAt(sx, sz);
+      const lo = Math.min(road?.a[2] ?? 0, road?.b[2] ?? 0);
+      const hi = Math.max(road?.a[2] ?? 0, road?.b[2] ?? 0);
+      const dx = (road?.b[0] ?? 0) - (road?.a[0] ?? 0), dz = (road?.b[1] ?? 0) - (road?.a[1] ?? 0);
+      // Stray nodes, off-grade segments and degenerate segments get no shelter.
+      if (!road || road.d > road.width / 2 + 2 || lo < -0.3 || hi > 0.3 || Math.hypot(dx, dz) < 0.01) continue;
+      lampGeo.push(...busShelter(sx, sz, road.y, dx, dz, road.width));
+      continue;
+    }
     if (f.geometry.type === "Point" && props.highway === "traffic_signals") {
       const [sx, sz] = point(f.geometry.coordinates);
       const road = roadAt(sx, sz);

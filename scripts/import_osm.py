@@ -48,7 +48,7 @@ def convert(source,boundary_path,output):
   if 'geometry' in w:return [[p['lon'],p['lat']] for p in w['geometry'] if p and 'lon' in p]
   refs=w.get('nodes',[])
   return [nodes[n] for n in refs] if all(n in nodes for n in refs) else []
- features=[];roads=[];areas=[];signals=[];crossings=[];consumed=set();missing=0
+ features=[];roads=[];areas=[];signals=[];crossings=[];bus_stops=[];consumed=set();missing=0
  def add(geom,props,id,kind):
   geom=make_valid(geom).intersection(boundary)
   created=[]
@@ -98,6 +98,8 @@ def convert(source,boundary_path,output):
    signals.append(dict(type='Feature',id=f"node/{n['id']}",properties=dict(n['tags']),geometry=mapping(Point(n['lon'],n['lat']))))
   if n['tags'].get('highway')=='crossing' and boundary.covers(Point(n['lon'],n['lat'])):
    crossings.append(dict(type='Feature',id=f"node/{n['id']}",properties=dict(n['tags']),geometry=mapping(Point(n['lon'],n['lat']))))
+  if n['tags'].get('highway')=='bus_stop' and boundary.covers(Point(n['lon'],n['lat'])):
+   bus_stops.append(dict(type='Feature',id=f"node/{n['id']}",properties=dict(n['tags']),geometry=mapping(Point(n['lon'],n['lat']))))
  center=[103.851,1.284];cos=math.cos(math.radians(center[1]));chunks={};segments=[]
  node_at={(round(v[0],7),round(v[1],7)):str(k) for k,v in nodes.items()}
  assert roads and features,'Export must contain both driveable roads and buildings with complete geometry'
@@ -253,7 +255,7 @@ def convert(source,boundary_path,output):
     ids=[node_at.get(tuple(coords2[0]),f"{r['id']}:{i}:{j}"),node_at.get(tuple(coords2[1]),f"{r['id']}:{i}:{j+1}")]
     props=dict(r['properties'],startNodeId=ids[0],endNodeId=ids[1])
     segments.append(dict(type='Feature',id=f"{r['id']}-{i}-{j}",properties=props,geometry=dict(type='LineString',coordinates=coords2)))
- for f in features+signals+crossings+segments:
+ for f in features+signals+crossings+bus_stops+segments:
   g=shape(f['geometry']);p=g.centroid;x=(p.x-center[0])*111320*cos;z=(center[1]-p.y)*111320
   key=f'{math.floor(x/500)}_{math.floor(z/500)}';chunks.setdefault(key,[]).append(f)
  preferred=[r for r in roads if r['properties'].get('name')=='Bayfront Avenue' and not r['properties'].get('tunnel')]
@@ -272,8 +274,8 @@ def convert(source,boundary_path,output):
  area_overview=[dict(type='Feature',id=a['id'],properties={'kind':a['properties']['kind']},geometry=mapping(shape(a['geometry']).simplify(.00001,preserve_topology=True))) for a in areas]
  write(output/'roads.geojson',fc(overview));write(output/'areas.geojson',fc(area_overview));write(output/'boundary.geojson',fc([dict(type='Feature',properties={},geometry=mapping(boundary))]))
  write(output/'source.json',dict(source='OpenStreetMap via Geofabrik',license='ODbL-1.0',attribution='© OpenStreetMap contributors',url='https://www.openstreetmap.org/copyright',extract_url='https://download.geofabrik.de/asia/malaysia-singapore-brunei.html',input=source.name,input_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),converted_at=datetime.now(timezone.utc).isoformat(),boundary=boundary_path.name,missing_geometry=missing))
- write(output/'manifest.json',dict(version=1,mode='osm',name='Singapore',center=center,bounds=list(boundary.bounds),boundaryFile='boundary.geojson',spawn=spawn,spawnTarget=target,chunks=index,counts=dict(buildings=len(features),roadSegments=len(segments),trafficSignals=len(signals),crossings=len(crossings)),estimatedHeights=True))
- print(f'Imported {len(features)} building polygons, {len(segments)} road segments, {len(signals)} traffic signals and {len(crossings)} crossings in {len(chunks)} chunks; skipped {missing} ways with missing geometry.')
+ write(output/'manifest.json',dict(version=1,mode='osm',name='Singapore',center=center,bounds=list(boundary.bounds),boundaryFile='boundary.geojson',spawn=spawn,spawnTarget=target,chunks=index,counts=dict(buildings=len(features),roadSegments=len(segments),trafficSignals=len(signals),crossings=len(crossings),busStops=len(bus_stops)),estimatedHeights=True))
+ print(f'Imported {len(features)} building polygons, {len(segments)} road segments, {len(signals)} traffic signals, {len(crossings)} crossings and {len(bus_stops)} bus stops in {len(chunks)} chunks; skipped {missing} ways with missing geometry.')
 if __name__=='__main__':
  parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('input',type=Path);parser.add_argument('--boundary',required=True,type=Path);parser.add_argument('--output',type=Path,default=ROOT);args=parser.parse_args()
  # Generate completely before touching any deployed data.
