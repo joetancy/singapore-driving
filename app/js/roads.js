@@ -1,4 +1,5 @@
 import { nearestPoint } from "./physics.js";
+import { allowedDirection } from "./traffic-sim.js";
 
 export const sampleHeight = (r, t) => r.a[2] + (r.b[2] - r.a[2]) * t;
 
@@ -185,4 +186,96 @@ export function pickNightLights(lamps, x, z, limit = 8, radius = 100) {
 // never become invisible walls.
 export function retainElevated(active, height, x, z) {
   return !!active && Math.abs(height) > 0.3 && pastSegmentEnd(active, x, z);
+}
+
+// Turn-by-turn routing over the connected directional road graph. A* with
+// a Euclidean heuristic (admissible: straight lines never exceed road
+// distance), one-way aware via allowedDirection. destPoint guides the
+// search; yaw picks the starting direction. Returns {steps: [{road,
+// direction}], distance} or null when unreachable within maxPops.
+const segLength = (r) => Math.hypot(r.b[0] - r.a[0], r.b[1] - r.a[1]);
+const endPoint = (r, direction) => direction > 0 ? r.b : r.a;
+
+function heapPush(heap, item) {
+  heap.push(item);
+  for (let i = heap.length - 1; i > 0;) {
+    const parent = (i - 1) >> 1;
+    if (heap[parent].f <= heap[i].f) break;
+    [heap[parent], heap[i]] = [heap[i], heap[parent]];
+    i = parent;
+  }
+}
+
+function heapPop(heap) {
+  const top = heap[0], last = heap.pop();
+  if (heap.length) {
+    heap[0] = last;
+    for (let i = 0;;) {
+      const left = i * 2 + 1, right = left + 1;
+      let next = i;
+      if (left < heap.length && heap[left].f < heap[next].f) next = left;
+      if (right < heap.length && heap[right].f < heap[next].f) next = right;
+      if (next === i) break;
+      [heap[next], heap[i]] = [heap[i], heap[next]];
+      i = next;
+    }
+  }
+  return top;
+}
+
+export function findRoute(index, startRoad, destFeatureId, destPoint, yaw, maxPops = 50000) {
+  if (!startRoad || !index?.nodes) return null;
+  if (startRoad.featureId === destFeatureId) return { steps: [], distance: 0 };
+  const dx = startRoad.b[0] - startRoad.a[0], dz = startRoad.b[1] - startRoad.a[1];
+  const startDir = Math.sin(yaw) * dx - Math.cos(yaw) * dz >= 0 ? 1 : -1;
+  const behind = nodeKey(startDir > 0 ? startRoad.a : startRoad.b);
+  const estimate = (p) => Math.hypot(p[0] - destPoint.x, p[1] - destPoint.z);
+  const heap = [], best = new Map(), cameFrom = new Map();
+  heapPush(heap, { node: behind, g: 0, f: estimate(startDir > 0 ? startRoad.a : startRoad.b) });
+  best.set(behind, 0);
+  let pops = 0;
+  while (heap.length && pops++ < maxPops) {
+    const { node, g } = heapPop(heap);
+    if (g > (best.get(node) ?? Infinity)) continue;
+    const options = [];
+    for (const road of index.nodes.get(node) || []) {
+      if (segLength(road) < 0.01) continue;
+      if (nodeKey(road.a) === node && allowedDirection(road, 1)) options.push({ road, direction: 1 });
+      if (nodeKey(road.b) === node && allowedDirection(road, -1)) options.push({ road, direction: -1 });
+    }
+    const prev = cameFrom.get(node);
+    const continuing = options.filter(({ road, direction }) =>
+      !prev || road.id !== prev.road.id || direction !== -prev.direction);
+    for (const { road, direction } of continuing.length ? continuing : options) {
+      const end = endPoint(road, direction);
+      const key = nodeKey(end);
+      const ng = g + segLength(road);
+      if (ng >= (best.get(key) ?? Infinity)) continue;
+      best.set(key, ng);
+      cameFrom.set(key, { from: node, road, direction });
+      if (road.featureId === destFeatureId) {
+        const steps = [{ road, direction }];
+        for (let at = node; cameFrom.get(at)?.road; at = cameFrom.get(at).from)
+          steps.unshift({ road: cameFrom.get(at).road, direction: cameFrom.get(at).direction });
+        return { steps, distance: ng };
+      }
+      heapPush(heap, { node: key, g: ng, f: ng + estimate(end) });
+    }
+  }
+  return null;
+}
+
+// Driver-relative maneuver between two route steps, using the same yaw
+// convention as the car (yaw = atan2(dx, -dz)): positive yaw change reads
+// as a right turn on the north-up minimap.
+export function turnManeuver(prev, prevDir, next, nextDir) {
+  const ux = (prev.b[0] - prev.a[0]) * prevDir, uz = (prev.b[1] - prev.a[1]) * prevDir;
+  const vx = (next.b[0] - next.a[0]) * nextDir, vz = (next.b[1] - next.a[1]) * nextDir;
+  const before = Math.atan2(ux, -uz), after = Math.atan2(vx, -vz);
+  let delta = after - before;
+  while (delta > Math.PI) delta -= 2 * Math.PI;
+  while (delta < -Math.PI) delta += 2 * Math.PI;
+  if (Math.abs(delta) < 0.44) return "straight";
+  if (Math.abs(delta) > 2.62) return "uturn";
+  return delta > 0 ? "right" : "left";
 }

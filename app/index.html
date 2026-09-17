@@ -59,6 +59,13 @@
           >
             <span aria-hidden="true">🗺️</span> Choose starting road</button
           ><button
+            id="navigate-picker"
+            class="icon-button"
+            data-label="Navigate"
+            aria-label="Navigate to a road"
+          >
+            <span aria-hidden="true">🧭</span> Navigate to road</button
+          ><button
             id="night-toggle"
             class="icon-button mode-button"
             aria-label="Enable dark mode"
@@ -91,6 +98,7 @@
         </div>
         <h2 id="district">Marina Bay</h2>
         <p id="street">Bayfront Avenue</p>
+        <p id="nav" hidden></p>
         <div class="map-status" id="map-status">APPROXIMATE DEMO MAP</div>
       </section>
       <div class="compass" aria-label="Car heading">

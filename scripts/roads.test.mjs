@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { PREPARED_ROAD_SCHEMA_VERSION, prepareAssets, surfacePolygon, taperZones } from "./prepare.mjs";
 import { prepareRoads, roadVisible, laneLayout, nominalHeight } from "./road-network.mjs";
-import { roadIndex, surfaceAt, retainElevated, pastSegmentEnd, pickNightLights, widthAt, stopLines, hatchBars } from "../app/js/roads.js";
+import { roadIndex, surfaceAt, retainElevated, pastSegmentEnd, pickNightLights, widthAt, stopLines, hatchBars, findRoute, turnManeuver } from "../app/js/roads.js";
 
 const center = [103.85, 1.29];
 const features = [
@@ -411,6 +411,31 @@ assert.deepEqual(hatchBars(5, 5), []);
 const offset = hatchBars(2, 9);
 assert.deepEqual(offset.map((b) => [b.lo, b.hi, b.flip]), [[5, 7.4, true]], "Phase follows absolute distance");
 console.log("junction hatch checks passed");
+
+// A* routing over the directional graph with driver-relative maneuvers.
+const seg2 = (id, featureId, a, b, laneLayout) => ({
+  id, featureId, a, b, width: 7, connections: [], laneLayout: laneLayout || { forward: 1, backward: 1, total: 2 },
+});
+const rA = seg2("a", "fA", [0, 0, 0], [10, 0, 0]);
+const rB = seg2("b", "fB", [10, 0, 0], [20, 0, 0]);
+const routeIndex = roadIndex([rA, rB]);
+const route = findRoute(routeIndex, rA, "fB", { x: 20, z: 0 }, Math.PI / 2);
+assert(route && route.steps.length === 2);
+assert.deepEqual(route.steps.map((s) => [s.road.id, s.direction]), [["a", 1], ["b", 1]]);
+assert.equal(route.distance, 20);
+assert.deepEqual(findRoute(routeIndex, rA, "fA", { x: 0, z: 0 }, Math.PI / 2), { steps: [], distance: 0 });
+assert.equal(findRoute(routeIndex, rA, "missing", { x: 999, z: 0 }, Math.PI / 2, 100), null);
+const oneWayB = seg2("b", "fB", [10, 0, 0], [20, 0, 0], { forward: 0, backward: 1, total: 1, oneWay: true, reverse: true });
+assert.equal(findRoute(roadIndex([rA, oneWayB]), rA, "fB", { x: 20, z: 0 }, Math.PI / 2, 100), null,
+  "One-way roads are not routed against traffic");
+assert.equal(turnManeuver(rA, 1, rB, 1), "straight");
+const rSouth = seg2("s", "fS", [10, 0, 0], [10, 10, 0]);
+const rNorth = seg2("n", "fN", [10, 0, 0], [10, -10, 0]);
+const rBack = seg2("u", "fU", [10, 0, 0], [0, 0, 0]);
+assert.equal(turnManeuver(rA, 1, rSouth, 1), "right", "East to south reads right");
+assert.equal(turnManeuver(rA, 1, rNorth, 1), "left", "East to north reads left");
+assert.equal(turnManeuver(rA, 1, rBack, 1), "uturn");
+console.log("routing and maneuver checks passed");
 
 // Named spawn presets stay inside the Singapore region with unique names.
 const { SPAWN_PRESETS } = await import("../app/js/spawn-map.js");

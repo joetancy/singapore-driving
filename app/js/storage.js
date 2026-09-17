@@ -1,6 +1,7 @@
 const SPAWN_KEY = "singapore-drive-spawn";
 const NIGHT_KEY = "singapore-drive-night";
 const TRAFFIC_KEY = "singapore-drive-traffic";
+const NAV_KEY = "singapore-drive-nav";
 
 export function loadTraffic() {
   try {
@@ -37,4 +38,19 @@ export function saveNight(night) {
   try {
     localStorage.setItem(NIGHT_KEY, night ? "1" : "0");
   } catch {}
+}
+
+export function loadNav() {
+  try {
+    const nav = JSON.parse(localStorage.getItem(NAV_KEY));
+    return nav && typeof nav.roadId === "string" && Number.isFinite(nav.x) && Number.isFinite(nav.z) ? nav : null;
+  } catch { return null; }
+}
+
+export function saveNav(destination) {
+  try { localStorage.setItem(NAV_KEY, JSON.stringify(destination)); } catch {}
+}
+
+export function clearNav() {
+  try { localStorage.removeItem(NAV_KEY); } catch {}
 }
