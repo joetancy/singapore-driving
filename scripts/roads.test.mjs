@@ -103,7 +103,7 @@ const crossingLevels = prepareRoads([
   road("surface-out", [junction, [103.851, 1.2901]]),
 ], center);
 assert(crossingLevels.samples.get("surface-out").every(p => p[2] === 0));
-const { tunnelPassage, trafficSignal, busShelter, gantry } = await import("../app/js/geometry.js");
+const { tunnelPassage, trafficSignal, busShelter, gantry, treeGeometries } = await import("../app/js/geometry.js");
 const passage = tunnelPassage([0, 0, -4, 0, 0, 1], [10, 0, -4, 10, 0, 1], 12);
 const positions = passage.attributes.position;
 for (let i = 0; i < positions.count; i++) assert(positions.getY(i) < 0, "Tunnel roof must stay below surface roads");
@@ -173,7 +173,7 @@ const duplicates = prepareLayout(overlapFeatures, new Map([
 assert(duplicates.segments.get('lower')[0].noLamps);
 
 // Leaving mapped asphalt must not change acceleration or impose a speed cap.
-const { stepCar, spawnPose } = await import('../app/js/physics.js');
+const { stepCar, spawnPose, hash2i, hitsTrunk } = await import('../app/js/physics.js');
 const onAsphalt = { x: 0, z: 0, yaw: 0, steer: 0, speed: 40 };
 const offAsphalt = { ...onAsphalt };
 for (let i = 0; i < 120; i++) {
@@ -448,6 +448,28 @@ assert(Math.abs((roofBox.boundingBox.max.x - roofBox.boundingBox.min.x) - 3.6) <
 const repeat = busShelter(0, 0, 0, 10, 0, 8);
 assert.equal(repeat[0].attributes.position.array[0], shelter[0].attributes.position.array[0]);
 console.log("bus shelter checks passed");
+
+// Deterministic scatter hashing and trunk collision circles.
+assert.equal(hash2i(12, -7), hash2i(12, -7));
+assert(hash2i(12, -7) !== hash2i(13, -7));
+assert(hash2i(0, 0) >= 0 && hash2i(0, 0) <= 0xffffffff);
+const trunks = [{ x: 10, z: 5, top: 5 }];
+assert(hitsTrunk(10, 5, 0, 0, trunks));
+assert(hitsTrunk(10.5, 5, 0, 0, trunks), "Car-length offsets catch the trunk");
+assert(!hitsTrunk(30, 5, 0, 0, trunks));
+assert(!hitsTrunk(10, 5, 0, 6, trunks), "Decks above the canopy pass freely");
+assert(!hitsTrunk(10, 5, 0, -4, trunks), "Tunnels below pass freely");
+assert(!hitsTrunk(10, 5, 0, 0, []));
+const geos = treeGeometries();
+const tbox = (g) => { g.computeBoundingBox(); return g.boundingBox; };
+assert(Math.abs(tbox(geos.trunk).max.y - 3.4) < 0.01 && Math.abs(tbox(geos.trunk).min.y) < 0.01);
+assert(Math.abs(tbox(geos.palmCrown).min.y - 3.35) < 0.01, "Crown meets the trunk top");
+assert(Math.abs(tbox(geos.leafCanopy).max.y - 5.82) < 0.02, "Canopy crowns the trunk");
+for (const g of Object.values(geos)) {
+  assert(g.attributes.position && g.attributes.normal, "Instance rendering needs positions and normals");
+  assert([...g.attributes.position.array].every(Number.isFinite));
+}
+console.log("greenery checks passed");
 
 // Expressway gantries flank the road with a beam and one antenna per lane.
 const gant = gantry(0, 0, 0, 0, 12, 3);

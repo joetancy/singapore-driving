@@ -174,6 +174,21 @@ export function busShelter(px, pz, groundY, dx, dz, width) {
   return parts;
 }
 
+// Reusable low-poly tropical greenery, instanced per chunk by the caller:
+// a shared trunk, a palm crown (apex-down umbrella) and a broadleaf
+// canopy. Pure for testability; all geometries are indexed and merge- or
+// instance-safe.
+export function treeGeometries() {
+  const trunk = new THREE.CylinderGeometry(0.13, 0.2, 3.4, 6);
+  trunk.translate(0, 1.7, 0);
+  const palmCrown = new THREE.ConeGeometry(1.8, 1.1, 8);
+  palmCrown.rotateX(Math.PI);
+  palmCrown.translate(0, 3.9, 0);
+  const leafCanopy = new THREE.IcosahedronGeometry(1.9, 0);
+  leafCanopy.translate(0, 4.2, 0);
+  return { trunk, palmCrown, leafCanopy };
+}
+
 // Expressway gantry (ERP-style): two poles flanking the road with a beam
 // and one hanging antenna unit per lane. Plain geometries merge into a
 // metal material; pure for testability. Returns the part list.

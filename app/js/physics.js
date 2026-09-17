@@ -30,6 +30,25 @@ export function touchesPolygon(x, z, rings, radius = 1.15) {
     r.some((a, i) => nearestPoint(x, z, a, r[(i + 1) % r.length]).d < radius),
   );
 }
+// Deterministic integer hash for procedural scatter: same cell always
+// yields the same tree, so chunk reloads never duplicate or move greenery.
+export function hash2i(x, y) {
+  let h = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263)) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return (h ^ (h >>> 16)) >>> 0;
+}
+// Trunk collision as a ground circle: gated by the tree's vertical extent
+// so decks above and tunnels below pass freely.
+export function hitsTrunk(x, z, yaw, y, trees) {
+  for (const t of trees) {
+    if (y > t.top || y + 1.7 < 0) continue;
+    if (Math.abs(x - t.x) > 1.5 || Math.abs(z - t.z) > 1.5) continue;
+    for (const offset of [-1.4, 0, 1.4])
+      if (Math.hypot(x + Math.sin(yaw) * offset - t.x, z - Math.cos(yaw) * offset - t.z) < 0.9)
+        return true;
+  }
+  return false;
+}
 // Starting pose on a road: outermost legal lane matching the heading, with
 // headings corrected on one-way roads (reverse one-ways face backward).
 // Uses traffic-sim's left-hand lane offsets so spawns sit where forward

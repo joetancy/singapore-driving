@@ -11,6 +11,7 @@ import {
   trafficSignal,
   busShelter,
   gantry,
+  treeGeometries,
 } from "./geometry.js";
 import { loadPreferences, saveNight, saveSpawn, loadTraffic, saveTraffic } from "./storage.js";
 import { createTraffic } from "./traffic.js";
@@ -23,6 +24,8 @@ import {
   touchesPolygon,
   stepCar,
   spawnPose,
+  hash2i,
+  hitsTrunk,
 } from "./physics.js";
 const $ = (id) => document.getElementById(id),
   d3 = window.d3;
@@ -48,6 +51,7 @@ let roads = [],
   headlight,
   headlightTarget,
   obstacles = [],
+  treeColliders = [],
   waterPolygons = [],
   boundaryPolygons = [],
   areas = [],
@@ -166,7 +170,7 @@ function addTunnelPortal(a, b, width, frames, insets) {
   frames.push(orientedBox(w + 2.3, 0.25, 1.4, x, threshold + 3.62, z, yaw));
   insets.push(orientedBox(w + 1.1, 0.08, 1.44, x, threshold + 3.46, z, yaw));
 }
-function createChunk(data) {
+function createChunk(data, bbox) {
   const group = new THREE.Group(),
     buildingGeo = [],
     bridgeGeo = [],
@@ -209,6 +213,31 @@ function createChunk(data) {
     }
     return best;
   };
+  // Deterministic roadside greenery: a hashed grid jittered per cell, kept
+  // off roads, buildings, water and elevated decks. Parks grow denser.
+  // Identical input yields identical trees, so reloads never duplicate them.
+  const treeSpots = [];
+  if (bbox) {
+    const cornerA = point([bbox[0], bbox[1]]), cornerB = point([bbox[2], bbox[3]]);
+    const minX = Math.min(cornerA[0], cornerB[0]), maxX = Math.max(cornerA[0], cornerB[0]);
+    const minZ = Math.min(cornerA[1], cornerB[1]), maxZ = Math.max(cornerA[1], cornerB[1]);
+    const step = 14;
+    for (let gx = Math.floor(minX / step); gx * step <= maxX && treeSpots.length < 350; gx++)
+      for (let gz = Math.floor(minZ / step); gz * step <= maxZ && treeSpots.length < 350; gz++) {
+        const h = hash2i(gx, gz);
+        const x = (gx + (h % 100) / 100) * step, z = (gz + ((h >> 8) % 100) / 100) * step;
+        if (x < minX || x > maxX || z < minZ || z > maxZ) continue;
+        const park = areas.some((ar) => ar.kind === "park" && inPolygon(x, z, ar.rings));
+        if (h % 100 >= (park ? 50 : 14)) continue;
+        const road = roadAt(x, z);
+        if (road && (road.d < road.width / 2 + 1.2 || road.y > 1.5)) continue;
+        if (buildingBases.some((rings) => inPolygon(x, z, rings))) continue;
+        if (waterPolygons.some((rings) => inPolygon(x, z, rings))) continue;
+        const palm = (h & 1) === 0;
+        const scale = 0.85 + ((h >> 16) % 50) / 100;
+        treeSpots.push({ x, z, palm, scale, rot: (h % 628) / 100, top: (palm ? 4.5 : 5.9) * scale });
+      }
+  }
   for (const f of data.features) {
     const props = f.properties || {};
     if (f.geometry.type === "Point" && props.highway === "bus_stop") {
@@ -434,6 +463,32 @@ function createChunk(data) {
       }
     }
   }
+  const treeGeos = treeGeometries();
+  const dummy = new THREE.Object3D(), tint = new THREE.Color();
+  const trunkMesh = new THREE.InstancedMesh(treeGeos.trunk, worldMaterials.trunk, Math.max(1, treeSpots.length));
+  const palmMesh = new THREE.InstancedMesh(treeGeos.palmCrown, worldMaterials.canopy, Math.max(1, treeSpots.length));
+  const leafMesh = new THREE.InstancedMesh(treeGeos.leafCanopy, worldMaterials.canopy, Math.max(1, treeSpots.length));
+  let palms = 0, leaves = 0;
+  const treeColliders = treeSpots.map((t, i) => {
+    dummy.position.set(t.x, 0, t.z);
+    dummy.rotation.set(0, t.rot, 0);
+    dummy.scale.setScalar(t.scale);
+    dummy.updateMatrix();
+    trunkMesh.setMatrixAt(i, dummy.matrix);
+    trunkMesh.setColorAt(i, tint.set(i % 2 ? "#6b4a2f" : "#5d4028"));
+    const crown = t.palm ? palmMesh : leafMesh;
+    const ci = t.palm ? palms++ : leaves++;
+    crown.setMatrixAt(ci, dummy.matrix);
+    crown.setColorAt(ci, tint.set(t.palm ? (i % 3 ? "#2f6b2f" : "#3a7d33") : (i % 3 ? "#3f7d3a" : "#4d8f43"))
+      .offsetHSL(0, 0, (((i * 7) % 11) - 5) / 250));
+    return { x: t.x, z: t.z, top: t.top };
+  });
+  trunkMesh.count = treeSpots.length; palmMesh.count = palms; leafMesh.count = leaves;
+  for (const mesh of [trunkMesh, palmMesh, leafMesh]) {
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    group.add(mesh);
+  }
   mergeInto(group, pavementGeo.filter(Boolean), worldMaterials.pavement);
   mergeInto(group, bridgeGeo, worldMaterials.bridge);
   mergeInto(group, tunnelGeo, worldMaterials.tunnel);
@@ -450,7 +505,7 @@ function createChunk(data) {
   mergeInto(group, tunnelLightGeo, worldMaterials.tunnelLamp);
   mergeInto(group, tunnelGlowGeo, worldMaterials.tunnelGlow);
   mergeInto(group, buildingGeo, worldMaterials.building, true);
-  group.userData = { segments, blocks, lamps: lampPoints, signals: roadSignals };
+  group.userData = { segments, blocks, lamps: lampPoints, signals: roadSignals, trees: treeColliders };
   return group;
 }
 function createAreas(data) {
@@ -476,6 +531,7 @@ function createAreas(data) {
 }
 function disposeGroup(group) {
   group.traverse((o) => {
+    if (o.isInstancedMesh) o.dispose();
     if (o.geometry) o.geometry.dispose();
   });
   scene.remove(group);
@@ -483,11 +539,13 @@ function disposeGroup(group) {
 function rebuildCollisionLists() {
   roads = [];
   obstacles = [];
+  treeColliders = [];
   const roadSignals = [];
   for (const c of chunkState.values()) {
     if (c.group) {
       roads.push(...c.group.userData.segments);
       obstacles.push(...c.group.userData.blocks);
+      treeColliders.push(...c.group.userData.trees || []);
       roadSignals.push(...c.group.userData.signals || []);
     }
   }
@@ -566,7 +624,7 @@ async function streamChunks(force = false) {
     chunkState.set(c.id, { loading: true });
     try {
       const data = await json("./data/" + c.file);
-      const group = createChunk(data);
+      const group = createChunk(data, c.bbox);
       scene.add(group);
       chunkState.set(c.id, { group });
       changed = true;
@@ -761,8 +819,7 @@ function blocked(x, z, y, road = null) {
   const boxRadius = 2.3;
   for (const b of obstacles) {
     if (onRoad && !b.clearancePrepared) continue;
-    if (b.base > y + 1.7 || b.height < y) continue;
-    if (
+    if (b.base > y + 1.7 || b.height < y) continue;    if (
       x < b.bbox[0] - boxRadius ||
       x > b.bbox[2] + boxRadius ||
       z < b.bbox[1] - boxRadius ||
@@ -780,6 +837,7 @@ function blocked(x, z, y, road = null) {
       )
         return true;
   }
+  if (hitsTrunk(x, z, state.yaw, y, treeColliders)) return true;
   return false;
 }
 function resetCar(announce = true) {
@@ -1244,6 +1302,8 @@ async function init() {
       side: THREE.DoubleSide,
     });
     worldMaterials.lamp = new THREE.MeshStandardMaterial({ color: "#808080", roughness: 0.65 });
+    worldMaterials.trunk = new THREE.MeshStandardMaterial({ color: "#ffffff", roughness: 0.95 });
+    worldMaterials.canopy = new THREE.MeshStandardMaterial({ color: "#ffffff", roughness: 0.9 });
     worldMaterials.signal = new THREE.MeshStandardMaterial({ color: "#232a2d", roughness: 0.8 });
     worldMaterials.signalLamp = new THREE.MeshBasicMaterial({ vertexColors: true });
     worldMaterials.lampHead = new THREE.MeshStandardMaterial({
