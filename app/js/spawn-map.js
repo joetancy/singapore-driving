@@ -1,6 +1,21 @@
 import { nearestPoint } from "./physics.js";
 import { mapLevel, visibleRoad } from "./roads.js";
 
+// Curated jump-to presets for the spawn picker. Snap-to-road spawning
+// forgives approximate coordinates; keep every preset inside Singapore.
+export const SPAWN_PRESETS = [
+  { name: "Marina Bay", lon: 103.8607, lat: 1.2836 },
+  { name: "Orchard Road", lon: 103.8391, lat: 1.3005 },
+  { name: "Changi Airport", lon: 103.99, lat: 1.362 },
+  { name: "Jurong East", lon: 103.7412, lat: 1.3331 },
+  { name: "Woodlands", lon: 103.7865, lat: 1.436 },
+  { name: "Tuas", lon: 103.649, lat: 1.264 },
+  { name: "Sentosa Gateway", lon: 103.829, lat: 1.278 },
+  { name: "Punggol", lon: 103.902, lat: 1.4052 },
+  { name: "Bukit Timah", lon: 103.776, lat: 1.33 },
+  { name: "Tampines", lon: 103.944, lat: 1.353 },
+];
+
 // Segment bounds include roads crossing the viewport with both endpoints outside.
 export function roadInView(road, min, max) {
   return road.samples.some((b, i, samples) => {
@@ -107,6 +122,24 @@ export function createSpawnPicker({ manifest, project, fetchJSON, onSelect }) {
   document.getElementById("spawn-zoom-out").onclick = () => svg.call(zoom.scaleBy, 1 / 1.6);
   const reset = () => svg.call(zoom.transform, d3.zoomIdentity.translate(130, 110).scale(minScale).translate(-center[0], -center[1]));
   document.getElementById("spawn-zoom-reset").onclick = reset;
+  const presetBar = document.createElement("div");
+  presetBar.className = "spawn-presets";
+  const presetLabel = document.createElement("span");
+  presetLabel.textContent = "Jump to:";
+  presetBar.append(presetLabel);
+  for (const preset of SPAWN_PRESETS) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = preset.name;
+    button.onclick = () => {
+      const p = project([preset.lon, preset.lat]);
+      svg.transition().duration(350).call(zoom.transform,
+        d3.zoomIdentity.translate(130, 110).scale(260 / 150).translate(-p[0], -p[1]));
+      status.textContent = `${preset.name} — click a nearby road to spawn`;
+    };
+    presetBar.append(button);
+  }
+  element.parentElement.before(presetBar);
   return async (position) => {
     center = position;
     marker.attr("cx", center[0]).attr("cy", center[1]);

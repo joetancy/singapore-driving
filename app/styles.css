@@ -901,6 +901,9 @@ dd {
 .spawn-map-wrap .spawn-marker { fill: var(--mint); pointer-events: none; }
 .spawn-choices { display: grid; gap: 6px; }
 .spawn-choices button { padding: 10px; background: #254753; color: white; border: 1px solid #78979f; border-radius: 6px; }
+.spawn-presets { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+.spawn-presets span { font-size: 12px; opacity: 0.8; }
+.spawn-presets button { padding: 6px 10px; background: transparent; color: inherit; border: 1px solid #78979f; border-radius: 20px; font-size: 12px; }
 .spawn-map-wrap #spawn-marker {
   fill: var(--mint);
   stroke: #17352e;

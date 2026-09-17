@@ -412,6 +412,16 @@ const offset = hatchBars(2, 9);
 assert.deepEqual(offset.map((b) => [b.lo, b.hi, b.flip]), [[5, 7.4, true]], "Phase follows absolute distance");
 console.log("junction hatch checks passed");
 
+// Named spawn presets stay inside the Singapore region with unique names.
+const { SPAWN_PRESETS } = await import("../app/js/spawn-map.js");
+assert(SPAWN_PRESETS.length >= 8);
+assert.equal(new Set(SPAWN_PRESETS.map((p) => p.name)).size, SPAWN_PRESETS.length, "Preset names unique");
+for (const p of SPAWN_PRESETS) {
+  assert(p.name && Number.isFinite(p.lon) && Number.isFinite(p.lat));
+  assert(p.lon >= 103.4 && p.lon <= 104.7 && p.lat >= 1.0 && p.lat <= 1.7, `${p.name} inside Singapore`);
+}
+console.log("spawn preset checks passed");
+
 // Bus shelters run parallel to the road, left of the way direction, with
 // roof, poles, bench and an upstream stop sign.
 const shelter = busShelter(0, 0, 0, 10, 0, 8);
