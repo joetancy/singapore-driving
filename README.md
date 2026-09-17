@@ -21,9 +21,11 @@ python -m pip install 'shapely>=2,<3'
 python scripts/import_osm.py singapore.osm --boundary singapore-boundary.geojson
 ```
 
+Node is also required: elevation preparation runs the shared `scripts/prepare.mjs` entry point before building-clearance so the importer and the static build use identical road heights, widths and cross-section corridors. Without Node the importer falls back to approximate ground-only clearance and reports it.
+
 The importer clips again to the supplied boundary, reconstructs multipolygon relations and holes, preserves OSM tags in detailed chunks, segments roads, and writes 500 m chunks, simplified overview layers, the boundary, manifest and source provenance. It sets `mode: osm`, switching the visible attribution to OpenStreetMap. Keep the input snapshot and its ODbL provenance. The derivative GeoJSON database is in `public/data/`.
 
-For direct GeoJSON replacement use the schema in the existing manifest and chunk files. Building heights use `height`, then `building:levels * 3.2`, then a 12.8 m estimate. Road widths use the OSM `width` tag or a highway-class fallback. The build prepares sampled, graded bridge and tunnel approaches plus lane metadata; this is stylised road elevation, not surveyed terrain or legal navigation.
+For direct GeoJSON replacement use the schema in the existing manifest and chunk files. Building heights use `height`, then `building:levels * 3.2`, then a 12.8 m estimate. Road widths use the OSM `width` tag or a highway-class fallback. The build prepares sampled, graded bridge and tunnel approaches plus lane metadata through the shared `scripts/prepare.mjs` entry point (prepared-road schema version in the manifest; rebuild fully when it changes). Road heights are stylised approach grades for driveable bridges and tunnels, not surveyed terrain elevation, and are not suitable for legal navigation.
 
 The loader fetches nearby static chunks and unloads distant building/road meshes. The road overview is prepared at startup; extremely large extracts may need additional overview simplification. There is no measured performance guarantee for a full-island extract yet.
 

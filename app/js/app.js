@@ -11,7 +11,7 @@ import {
 } from "./geometry.js";
 import { loadPreferences, saveNight, saveSpawn, loadTraffic, saveTraffic } from "./storage.js";
 import { createTraffic } from "./traffic.js";
-import { roadIndex, surfaceAt, sampleHeight, drivingContact } from "./roads.js";
+import { roadIndex, surfaceAt, sampleHeight, drivingContact, retainElevated } from "./roads.js";
 import { createSpawnPicker } from "./spawn-map.js";
 import {
   clamp,
@@ -328,10 +328,15 @@ function createChunk(data) {
         base = Math.max(0, parseFloat(props.min_height) || 0);
       const clearance = props.clearanceGeometry,
         clearanceHeight = Math.min(height, Number(props.clearanceHeight) || height),
-        bands = clearance ? [
-          [ringsOf({ geometry: clearance }), base, clearanceHeight],
-          ...(height > clearanceHeight ? [[ringsOf(f), clearanceHeight, height]] : []),
-        ] : [[ringsOf(f), base, height]];
+        bands = Array.isArray(props.clearanceBands) && props.clearanceBands.length
+          ? props.clearanceBands.map((b) => [
+              (b.cleared ? ringsOf({ geometry: clearance }) : ringsOf(f)),
+              Math.max(base, b.base), Math.min(height, b.height),
+            ]).filter(([, lo, hi]) => hi - lo > 0.00001)
+          : clearance ? [
+            [ringsOf({ geometry: clearance }), base, clearanceHeight],
+            ...(height > clearanceHeight ? [[ringsOf(f), clearanceHeight, height]] : []),
+          ] : [[ringsOf(f), base, height]];
       for (const [shapes, bandBase, bandHeight] of bands) for (const raw of shapes) {
         const rings = raw.map((r) => r.map(point));
         if (!rings[0] || rings[0].length < 4) continue;
@@ -674,15 +679,24 @@ function getNearestRoad(x, z) {
   }
   return best;
 }
+function chunkLoadedAt(x, z) {
+  const ll = projection.invert([x, z]);
+  const containing = manifest.chunks.filter((c) =>
+    ll[0] >= c.bbox[0] && ll[0] <= c.bbox[2] && ll[1] >= c.bbox[1] && ll[1] <= c.bbox[3]);
+  if (!containing.length) return true; // Outside mapped chunks: a genuine edge.
+  return containing.every((c) => chunkState.get(c.id)?.group);
+}
 function blocked(x, z, y, road = null) {
-  // Imported buildings occasionally overlap a mapped road. The road contract
-  // wins at the point of contact so bad footprints cannot make a route
-  // impassable; off-road collisions remain unchanged.
-  // Legacy source assets lack import-time clearance. Newer assets carry
-  // clearancePrepared and can use their derived building polygons directly.
-  if (road && road.d <= road.width / 2 + 0.6 && !obstacles.some((b) => b.clearancePrepared)) return false;
+  // Buildings colliding with a road use their import-time derived polygons:
+  // the road corridor wins only inside prepared clearance geometry, while
+  // the remaining footprint still blocks the car. Obstacles from legacy
+  // assets without derived geometry keep the previous road-wins behavior so
+  // bad footprints cannot make a route impassable; off-road collisions,
+  // boundary and water protection remain unchanged.
+  const onRoad = road && road.d <= road.width / 2 + 0.6;
   const boxRadius = 2.3;
   for (const b of obstacles) {
+    if (onRoad && !b.clearancePrepared) continue;
     if (b.base > y + 1.7 || b.height < y) continue;
     if (
       x < b.bbox[0] - boxRadius ||
@@ -957,6 +971,20 @@ function animate() {
                 ? "Stay on land — reverse to return"
                 : "Building ahead — reverse to return",
           );
+        }
+      } else if (!contact && retainElevated(activeRoad, smoothGround, state.x, state.z)) {
+        // Unsupported elevated edge: past a deck end or into a chunk that
+        // has not loaded yet. Stop at the last supported position and
+        // height instead of snapping to ground level.
+        state.x = oldX;
+        state.z = oldZ;
+        state.speed = 0;
+        if (!chunkLoadedAt(state.x, state.z)) {
+          lastStream = 0; // Let streaming retry the missing section.
+          if (now - lastHud > 2000) {
+            lastHud = now;
+            toast("Loading road ahead…");
+          }
         }
       } else {
         nearRoad = contact;

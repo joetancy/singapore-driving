@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { prepareRoads, roadVisible, laneLayout } from "./road-network.mjs";
-import { roadIndex, surfaceAt } from "../app/js/roads.js";
+import { PREPARED_ROAD_SCHEMA_VERSION, prepareAssets, surfacePolygon } from "./prepare.mjs";
+import { prepareRoads, roadVisible, laneLayout, nominalHeight } from "./road-network.mjs";
+import { roadIndex, surfaceAt, retainElevated, pastSegmentEnd } from "../app/js/roads.js";
 
 const center = [103.85, 1.29];
 const features = [
@@ -216,3 +217,56 @@ const twinTunnels = new Map([
 const fittedTunnels = prepareLayout(overlapFeatures, twinTunnels);
 assert((fittedTunnels.widths.get('lower') + fittedTunnels.widths.get('upper')) / 2 + 2.5 <= 7.00001);
 assert(!fittedTunnels.segments.get('lower')[0].left, 'Adjacent tunnels must retain their separating walls');
+
+// Shared preparation entry: one representation for rendering, contact,
+// clearance widths and spawn data, with explicit surface polygons.
+assert.equal(PREPARED_ROAD_SCHEMA_VERSION, 7);
+const sharedFeatures = [
+  road('shared-ground', [[103.85, 1.29], [103.851, 1.29]], { highway: 'primary' }),
+  road('shared-bridge', [[103.851, 1.29], [103.852, 1.29]], { highway: 'primary', bridge: 'yes' }),
+];
+const first = prepareAssets(sharedFeatures, center);
+const second = prepareAssets(sharedFeatures, center);
+assert.deepEqual(first.samples, second.samples, 'Repeated preparation must be deterministic');
+assert.deepEqual([...first.widths.values()], [...second.widths.values()]);
+assert(Array.isArray(first.warnings));
+assert(first.roads.length === 2);
+for (const entry of first.roads) {
+  assert(entry.samples.length >= 2 && entry.samples.every((p) => p.length === 6 && p.every(Number.isFinite)));
+  assert(entry.width >= 4 && entry.width <= 32);
+  assert(entry.laneLayout.total >= 1);
+}
+const straight = first.roads[0];
+const ring = surfacePolygon(straight.samples, straight.width);
+assert.equal(ring.length, straight.samples.length * 2 + 1, 'Polygon joins every cross-section without gaps');
+assert.deepEqual(ring[0], ring.at(-1), 'Polygon ring is closed across the endpoint caps');
+assert(Math.abs(Math.hypot(ring[0][0] - ring.at(-2)[0], ring[0][1] - ring.at(-2)[1]) - straight.width) < 0.01,
+  'Endpoint cap spans the full road width');
+assert.deepEqual(surfacePolygon([straight.samples[0]], straight.width), []);
+console.log('shared preparation, schema version and surface polygon checks passed');
+
+// Non-"no" bridge/tunnel values order levels; covered alone never implies underground.
+assert.equal(nominalHeight({ bridge: "viaduct" }), 4);
+assert.equal(nominalHeight({ tunnel: "building_passage" }), -4);
+assert.equal(nominalHeight({ tunnel: "yes", covered: "yes" }), -4);
+assert.equal(nominalHeight({ covered: "yes" }), 0);
+assert.equal(nominalHeight({ layer: 2 }), 8);
+assert.equal(nominalHeight({ layer: -1 }), -4);
+const covered = prepareRoads([
+  road("covered-road", [[103.85, 1.29], [103.851, 1.29]], { highway: "primary", covered: "yes" }),
+], center);
+assert(covered.samples.get("covered-road").every((p) => p[2] === 0));
+
+// Losing contact past an elevated deck end retains position and height;
+// lateral departures and ground roads keep existing behavior.
+const deck = { a: [0, 0, 4], b: [100, 0, 4], width: 10 };
+assert(pastSegmentEnd(deck, 101, 0));
+assert(pastSegmentEnd(deck, -1, 0));
+assert(!pastSegmentEnd(deck, 50, 30));
+assert(!pastSegmentEnd(deck, 50, 0));
+assert(retainElevated(deck, 4, 101, 0));
+assert(retainElevated({ ...deck, a: [0, 0, -4], b: [100, 0, -4] }, -4, 101, 0));
+assert(!retainElevated(deck, 4, 50, 30), "Side departures must still fall to ground");
+assert(!retainElevated({ ...deck, a: [0, 0, 0], b: [100, 0, 0] }, 0, 101, 0));
+assert(!retainElevated(null, 4, 101, 0));
+console.log("covered levels and elevated edge retention checks passed");

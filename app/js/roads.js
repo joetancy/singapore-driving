@@ -95,3 +95,21 @@ export function surfaceAt(index, x, z, active = null, height = 0) {
 export const mapLevel = (width) => width > 15000 ? 0 : width > 3000 ? 1 : 2;
 export const visibleRoad = (r, level) => level === 2 ||
   (level === 0 ? /^(motorway|trunk|primary)/ : /^(motorway|trunk|primary|secondary|tertiary)/).test(r.highway);
+
+// End-cap margin shared with surfaceAt: the rounded nearest-point cap must
+// not carry the car past a deck end.
+export function pastSegmentEnd(r, x, z, margin = 0.6) {
+  const dx = r.b[0] - r.a[0], dz = r.b[1] - r.a[1];
+  const length = Math.hypot(dx, dz) || 1;
+  const along = ((x - r.a[0]) * dx + (z - r.a[1]) * dz) / length;
+  return along < -margin || along > length + margin;
+}
+
+// Losing contact on an elevated deck driven past its end (or into a chunk
+// that has not loaded yet) must retain the last supported position and
+// height instead of snapping to ground level. Lateral departures off the
+// side of the deck keep the existing fall-to-ground behavior so road edges
+// never become invisible walls.
+export function retainElevated(active, height, x, z) {
+  return !!active && Math.abs(height) > 0.3 && pastSegmentEnd(active, x, z);
+}

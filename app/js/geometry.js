@@ -7,13 +7,6 @@ export function ringsOf(feature) {
   return geometry.type === "MultiPolygon" ? geometry.coordinates : [];
 }
 
-export function elevation(properties) {
-  if (properties.tunnel === "yes" || Number(properties.layer) < 0) return -4;
-  return properties.bridge === "yes"
-    ? Math.max(4, Number(properties.layer || 1) * 4)
-    : Math.max(0, Number(properties.layer || 0) * 4);
-}
-
 export function colourGeometry(geometry, color) {
   const rgb = new THREE.Color(color);
   const colors = new Float32Array(geometry.attributes.position.count * 3);
