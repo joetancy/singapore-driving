@@ -25,7 +25,7 @@ export function roadInView(road, min, max) {
   });
 }
 
-export function createSpawnPicker({ manifest, project, fetchJSON, onSelect }) {
+export function createSpawnPicker({ manifest, project, fetchJSON, onSelect, selectionLabel = () => "starting road" }) {
   const d3 = window.d3, svg = d3.select("#spawn-map"), element = svg.node();
   const layer = svg.append("g"), overviewPath = layer.append("path").attr("class", "road overview"),
     detailPath = layer.append("path").attr("class", "road detail"),
@@ -67,7 +67,7 @@ export function createSpawnPicker({ manifest, project, fetchJSON, onSelect }) {
       const data = results.flatMap((r) => r.status === "fulfilled" ? r.value : []);
       displayed = [...new Map([...displayed, ...data.filter(inView)].map((r) => [r.id, r])).values()];
       detailPath.attr("d", path(displayed)); overviewPath.attr("d", "");
-      status.textContent = failed ? "Some local roads failed to load. Move or zoom to retry." : "Street view · click a road to spawn";
+      status.textContent = failed ? "Some local roads failed to load. Move or zoom to retry." : `Street view · click a road to choose your ${selectionLabel()}`;
       // Bound the completed-request cache; active data remains in displayed.
       while (cache.size > 160) cache.delete(cache.keys().next().value);
     } catch {
@@ -102,15 +102,15 @@ export function createSpawnPicker({ manifest, project, fetchJSON, onSelect }) {
     choices.replaceChildren();
     const choose = async (hit) => {
       if (busy) return;
-      busy = true; status.textContent = "Loading starting road…";
+      busy = true; status.textContent = `Loading ${selectionLabel()}…`;
       choices.querySelectorAll("button").forEach((b) => b.disabled = true);
-      try { await onSelect(hit); marker.attr("cx", hit.x).attr("cy", hit.z); status.textContent = "Starting road selected."; }
+      try { await onSelect(hit); marker.attr("cx", hit.x).attr("cy", hit.z); status.textContent = `${selectionLabel()[0].toUpperCase() + selectionLabel().slice(1)} selected.`; }
       catch (e) { status.textContent = "Could not load this road. Please try again."; console.error(e); }
       finally { busy = false; choices.querySelectorAll("button").forEach((b) => b.disabled = false); }
     };
     if (!options.length) { status.textContent = "Click closer to a visible road, or zoom in."; return; }
     if (options.length === 1) { await choose(options[0]); return; }
-    status.textContent = "Choose a road and height:";
+    status.textContent = `Choose a ${selectionLabel()} road and height:`;
     for (const hit of options) {
       const button = document.createElement("button");
       button.type = "button";
@@ -135,7 +135,7 @@ export function createSpawnPicker({ manifest, project, fetchJSON, onSelect }) {
       const p = project([preset.lon, preset.lat]);
       svg.transition().duration(350).call(zoom.transform,
         d3.zoomIdentity.translate(130, 110).scale(260 / 150).translate(-p[0], -p[1]));
-      status.textContent = `${preset.name} — click a nearby road to spawn`;
+      status.textContent = `${preset.name} — click a nearby road to choose your ${selectionLabel()}`;
     };
     presetBar.append(button);
   }

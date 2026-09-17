@@ -13,9 +13,9 @@ import {
   gantry,
   treeGeometries,
 } from "./geometry.js";
-import { loadPreferences, saveNight, saveSpawn, loadTraffic, saveTraffic } from "./storage.js";
+import { loadPreferences, saveNight, saveSpawn, loadTraffic, saveTraffic, loadNav, saveNav, clearNav } from "./storage.js";
 import { createTraffic } from "./traffic.js";
-import { roadIndex, surfaceAt, sampleHeight, drivingContact, retainElevated, pickNightLights, widthAt, stopLines, hatchBars } from "./roads.js";
+import { roadIndex, surfaceAt, sampleHeight, drivingContact, retainElevated, pickNightLights, widthAt, stopLines, hatchBars, findRoute, turnManeuver } from "./roads.js";
 import { createSpawnPicker } from "./spawn-map.js";
 import {
   clamp,
@@ -74,7 +74,8 @@ const worldMaterials = {},
     segments: { value: Array.from({ length: 64 }, () => new THREE.Vector4()) },
     widths: { value: Array(64).fill(0) },
   };
-let surfaces = roadIndex([]), activeRoad = null, spawnSelection = null;
+let surfaces = roadIndex([]), activeRoad = null, spawnSelection = null,
+  navigation = null, route = null, routeRoadId = null, pickerMode = "spawn";
 function toast(text) {
   $("toast").textContent = text;
   $("toast").classList.add("show");
@@ -551,6 +552,8 @@ function rebuildCollisionLists() {
   }
   updateMinimapRoads();
   surfaces = roadIndex(roads);
+  // Streaming can complete the missing portion of a local route.
+  if (navigation) routeRoadId = null;
   traffic?.syncRoads(roads, roadSignals);
   updateTunnelOpenings();
   updateNightLights();
@@ -590,6 +593,11 @@ function updateMinimapRoads() {
     const map = $(id);
     if (map) map.setAttribute("d", d);
   }
+  updateRouteLine();
+}
+function updateRouteLine() {
+  const path = $("map-route");
+  if (path) path.setAttribute("d", route?.steps.map(({ road }) => `M${road.a[0]},${road.a[1]}L${road.b[0]},${road.b[1]}`).join("") || "");
 }
 async function streamChunks(force = false) {
   let changed = false;
@@ -739,6 +747,7 @@ function setupMinimap() {
     )
     .attr("fill-rule", "evenodd");
   layer.append("path").attr("id", "map-roads").attr("class", "road");
+  layer.append("path").attr("id", "map-route").attr("class", "route");
   updateMinimapRoads();
   svg
     .append("circle")
@@ -762,12 +771,24 @@ function setupMinimap() {
     .attr("stroke-width", 1);
 }
 let showSpawnMap;
-function openSpawnPicker() {
+function openSpawnPicker(mode = "spawn") {
   if (!ready) return;
+  pickerMode = mode;
   clearDrivingInput();
   if (!showSpawnMap) showSpawnMap = createSpawnPicker({
     manifest, project: point, fetchJSON: json,
+    selectionLabel: () => pickerMode === "nav" ? "destination" : "starting road",
     onSelect: async (hit) => {
+      if (pickerMode === "nav") {
+        if (!roads.some((road) => road.featureId === hit.id)) throw new Error("Destination road is outside the loaded map");
+        navigation = { roadId: hit.id, x: hit.x, z: hit.z, name: hit.name || "Destination" };
+        routeRoadId = null;
+        saveNav(navigation);
+        updateNavigation();
+        $("spawn-dialog").close();
+        toast(route ? "Route ready" : "No legal route to this road");
+        return;
+      }
       const before = { ...state }, previousSelection = spawnSelection;
       state.x = hit.x; state.z = hit.z;
       try {
@@ -789,8 +810,18 @@ function openSpawnPicker() {
       }
     },
   });
+  const navigating = mode === "nav";
+  $("spawn-title").textContent = navigating ? "Choose a destination road" : "Pick a road in Singapore";
+  $("spawn-dialog").querySelector(".eyebrow").textContent = navigating ? "NAVIGATE TO" : "CHOOSE A START";
   $("spawn-dialog").showModal();
   showSpawnMap([state.x, state.z]);
+}
+function updateNavigation() {
+  if (!navigation || !nearRoad) { route = null; routeRoadId = null; updateRouteLine(); return; }
+  if (routeRoadId === nearRoad.id) return;
+  routeRoadId = nearRoad.id;
+  route = findRoute(surfaces, nearRoad, navigation.roadId, navigation, state.yaw);
+  updateRouteLine();
 }
 function getNearestRoad(x, z) {
   let best = null;
@@ -971,6 +1002,7 @@ function bindControls() {
   };
   $("close-info").onclick = $("back-to-road").onclick = () => $("info").close();
   $("spawn-picker").onclick = () => { $("settings").close(); openSpawnPicker(); };
+  $("navigate-picker").onclick = () => { $("settings").close(); openSpawnPicker("nav"); };
   $("view-toggle").onclick = toggleView;
   $("open-settings").onclick = () => { clearDrivingInput(); $("settings").showModal(); };
   $("close-settings").onclick = $("settings-done").onclick = () => $("settings").close();
@@ -981,7 +1013,7 @@ function bindControls() {
   };
   setDensity(loadTraffic());
   $("traffic-density").oninput = e => { setDensity(e.target.value); saveTraffic(e.target.value); };
-  $("minimap").onclick = openSpawnPicker;
+  $("minimap").onclick = () => openSpawnPicker();
   $("minimap-toggle").onclick = () =>
     setMinimapCollapsed(!document.querySelector(".map-panel").classList.contains("collapsed"));
   setMinimapCollapsed(matchMedia("(max-width: 760px)").matches);
@@ -1015,6 +1047,24 @@ function hud() {
   $("street").textContent = nearRoad && nearRoad.d < nearRoad.width / 2 + 1
     ? nearRoad.name || ""
     : "";
+  if (navigation && Math.hypot(state.x - navigation.x, state.z - navigation.z) < 18) {
+    navigation = null;
+    route = null;
+    routeRoadId = null;
+    clearNav();
+    toast("You have arrived");
+    updateRouteLine();
+  } else if (navigation) {
+    updateNavigation();
+    const next = route?.steps.findIndex(({ road }) => road.id === nearRoad?.id) ?? -1;
+    const following = next >= 0 ? route.steps[next + 1] : route?.steps?.[0];
+    const maneuver = following && next >= 0 ? turnManeuver(route.steps[next].road, route.steps[next].direction, following.road, following.direction) : "straight";
+    const km = route ? (route.distance / 1000).toFixed(1) : "?";
+    $("nav").hidden = false;
+    $("nav").textContent = route ? `${maneuver === "uturn" ? "U-turn" : maneuver[0].toUpperCase() + maneuver.slice(1)} · ${km} km to ${navigation.name}` : `No local route to ${navigation.name}`;
+  } else {
+    $("nav").hidden = true;
+  }
   const ll = projection.invert([state.x, state.z]);
   $("coordinates").textContent =
     ll[1].toFixed(3) + "° N, " + ll[0].toFixed(3) + "° E";
@@ -1389,6 +1439,8 @@ async function init() {
     traffic.density(loadTraffic());
     setupMinimap();
     resetCar(false);
+    navigation = loadNav();
+    updateNavigation();
     setNight(night);
     const resize = () => {
       const w = canvas.clientWidth,
