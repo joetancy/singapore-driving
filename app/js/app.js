@@ -12,7 +12,7 @@ import {
 } from "./geometry.js";
 import { loadPreferences, saveNight, saveSpawn, loadTraffic, saveTraffic } from "./storage.js";
 import { createTraffic } from "./traffic.js";
-import { roadIndex, surfaceAt, sampleHeight, drivingContact, retainElevated, pickNightLights, widthAt } from "./roads.js";
+import { roadIndex, surfaceAt, sampleHeight, drivingContact, retainElevated, pickNightLights, widthAt, stopLines } from "./roads.js";
 import { createSpawnPicker } from "./spawn-map.js";
 import {
   clamp,
@@ -214,6 +214,9 @@ function createChunk(data) {
       const signal = trafficSignal(sx, sz, road.y, dx, dz, road.width);
       signalGeo.push(...signal.housing);
       signalLampGeo.push(...signal.lamps);
+      for (const line of stopLines(sx, sz, road.y, dx, dz, road.width, road.laneLayout)) {
+        markGeo.push(quad([line.ax, line.az], [line.bx, line.bz], 0.45, line.y + 0.09, "#e7e8d6"));
+      }
       continue;
     }
     if (f.geometry.type === "Point" && props.highway === "crossing") {

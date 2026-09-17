@@ -117,6 +117,40 @@ export function widthAt(tapers, d, width) {
   return width;
 }
 
+// Stop-line bars for a signalized approach: one transverse segment per
+// legal travel direction, 2 m upstream of the signal node and spanning that
+// direction's lanes (left-hand traffic: forward lanes sit left of the OSM
+// way direction). Returns [{ax, az, bx, bz, y}] world-metre segments; the
+// caller draws them with quad(). Degenerate spans are skipped.
+export function stopLines(sx, sz, y, dx, dz, width, laneLayout) {
+  const len = Math.hypot(dx, dz) || 1;
+  const ux = dx / len, uz = dz / len;
+  const total = laneLayout?.total || 2;
+  const forward = laneLayout ? laneLayout.forward : 1;
+  const backward = laneLayout ? laneLayout.backward : 1;
+  const lane = width / total;
+  const lines = [];
+  // [lo, hi] lateral spans with left positive, mirroring the arrow and
+  // divider placement used by the renderer.
+  const approaches = [
+    { count: forward, lo: width / 2 - forward * lane, hi: width / 2, dir: 1 },
+    { count: backward, lo: -width / 2, hi: -width / 2 + backward * lane, dir: -1 },
+  ];
+  for (const { count, lo, hi, dir } of approaches) {
+    if (!(count > 0) || hi - lo < 0.1) continue;
+    const mid = (lo + hi) / 2, half = (hi - lo) / 2;
+    // Left normal (-uz, ux); upstream is -dir for forward travel.
+    const upstream = dir === 1 ? -2 : 2;
+    const px = sx + ux * upstream, pz = sz + uz * upstream;
+    lines.push({
+      ax: px + -uz * half, az: pz + ux * half,
+      bx: px - -uz * half, bz: pz - ux * half,
+      y, lateral: mid,
+    });
+  }
+  return lines;
+}
+
 // Night lighting budget: at most eight non-shadow-casting lights for the
 // nearest lamp heads within 100 m.
 export function pickNightLights(lamps, x, z, limit = 8, radius = 100) {

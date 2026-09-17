@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { PREPARED_ROAD_SCHEMA_VERSION, prepareAssets, surfacePolygon, taperZones } from "./prepare.mjs";
 import { prepareRoads, roadVisible, laneLayout, nominalHeight } from "./road-network.mjs";
-import { roadIndex, surfaceAt, retainElevated, pastSegmentEnd, pickNightLights, widthAt } from "../app/js/roads.js";
+import { roadIndex, surfaceAt, retainElevated, pastSegmentEnd, pickNightLights, widthAt, stopLines } from "../app/js/roads.js";
 
 const center = [103.85, 1.29];
 const features = [
@@ -382,3 +382,20 @@ assert.equal(Math.abs(zAt(2)), 4);
 assert.equal(Math.abs(zAt(5)), 4, "Shared a-end vertex reused by both triangles");
 for (const i of [1, 3, 4]) assert.equal(Math.abs(zAt(i)), 2, "Narrow end tapers down");
 console.log("lane-merge taper checks passed");
+
+// Stop lines sit 2 m upstream of the signal per legal direction, spanning
+// that direction's lanes on the left-hand side.
+const twoWayLanes = { forward: 1, backward: 1, total: 2 };
+const stops = stopLines(0, 0, 1.5, 10, 0, 10, twoWayLanes);
+assert.equal(stops.length, 2);
+const fwd = stops.find((l) => l.lateral > 0), bwd = stops.find((l) => l.lateral < 0);
+assert.deepEqual([fwd.ax, fwd.az, fwd.bx, fwd.bz, fwd.y], [-2, 2.5, -2, -2.5, 1.5]);
+assert.deepEqual([bwd.ax, bwd.az, bwd.bx, bwd.bz, bwd.y], [2, 2.5, 2, -2.5, 1.5]);
+const oneWayStops = stopLines(0, 0, 0, 10, 0, 10, { forward: 2, backward: 0, total: 2, oneWay: true, reverse: false });
+assert.equal(oneWayStops.length, 1);
+assert.deepEqual([oneWayStops[0].ax, oneWayStops[0].az, oneWayStops[0].bx, oneWayStops[0].bz], [-2, 5, -2, -5]);
+const reverseStops = stopLines(0, 0, 0, 10, 0, 10, { forward: 0, backward: 2, total: 2, oneWay: true, reverse: true });
+assert.equal(reverseStops.length, 1);
+assert.deepEqual([reverseStops[0].ax, reverseStops[0].az], [2, 5]);
+assert.equal(stopLines(0, 0, 0, 10, 0, 10, null).length, 2);
+console.log("signal stop line checks passed");
