@@ -103,7 +103,7 @@ const crossingLevels = prepareRoads([
   road("surface-out", [junction, [103.851, 1.2901]]),
 ], center);
 assert(crossingLevels.samples.get("surface-out").every(p => p[2] === 0));
-const { tunnelPassage, trafficSignal, busShelter } = await import("../app/js/geometry.js");
+const { tunnelPassage, trafficSignal, busShelter, gantry } = await import("../app/js/geometry.js");
 const passage = tunnelPassage([0, 0, -4, 0, 0, 1], [10, 0, -4, 10, 0, 1], 12);
 const positions = passage.attributes.position;
 for (let i = 0; i < positions.count; i++) assert(positions.getY(i) < 0, "Tunnel roof must stay below surface roads");
@@ -448,3 +448,26 @@ assert(Math.abs((roofBox.boundingBox.max.x - roofBox.boundingBox.min.x) - 3.6) <
 const repeat = busShelter(0, 0, 0, 10, 0, 8);
 assert.equal(repeat[0].attributes.position.array[0], shelter[0].attributes.position.array[0]);
 console.log("bus shelter checks passed");
+
+// Expressway gantries flank the road with a beam and one antenna per lane.
+const gant = gantry(0, 0, 0, 0, 12, 3);
+assert.equal(gant.length, 6);
+assert(gant.every((g) => [...g.attributes.position.array].every(Number.isFinite)));
+const gbox = (g) => { g.computeBoundingBox(); return g.boundingBox; };
+const poleL = gbox(gant[0]), poleR = gbox(gant[1]);
+assert(Math.abs(poleL.max.y - 6) < 0.01 && Math.abs(poleR.max.y - 6) < 0.01);
+const poleXs = [(poleL.max.x + poleL.min.x) / 2, (poleR.max.x + poleR.min.x) / 2].sort((a, b) => a - b);
+assert.deepEqual(poleXs.map((v) => Math.round(v * 10) / 10), [-6.8, 6.8]);
+const beamBox = gbox(gant[2]);
+assert(Math.abs((beamBox.max.x - beamBox.min.x) - 13.6) < 0.01);
+assert(Math.abs((beamBox.max.y + beamBox.min.y) / 2 - 5.9) < 0.01);
+const units = gant.slice(3).map((g) => {
+  const b = gbox(g); return [(b.max.x + b.min.x) / 2, (b.max.y + b.min.y) / 2];
+});
+assert.deepEqual(units.map(([x]) => Math.round(x)), [-4, 0, 4]);
+assert(units.every(([, y]) => Math.abs(y - 5.5) < 0.01));
+assert.equal(gantry(0, 0, 0, 0, 12, 10).length, 9, "Antennas cap at six");
+assert.equal(gantry(0, 0, 0, 0, 12, 0).length, 5, "Missing lane data falls back to two");
+const gantAgain = gantry(0, 0, 0, 0, 12, 3);
+assert.equal(gantAgain[0].attributes.position.array[0], gant[0].attributes.position.array[0]);
+console.log("gantry checks passed");

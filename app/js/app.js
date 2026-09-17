@@ -10,6 +10,7 @@ import {
   tunnelPassage,
   trafficSignal,
   busShelter,
+  gantry,
 } from "./geometry.js";
 import { loadPreferences, saveNight, saveSpawn, loadTraffic, saveTraffic } from "./storage.js";
 import { createTraffic } from "./traffic.js";
@@ -354,6 +355,12 @@ function createChunk(data) {
           lampGlowGeo.push(lightPool(x + rx * 2.45, p[2], z + rz * 2.45, 5));
           lampGlowGeo.push(downGlow(x + rx * 2.45, p[2] + 7.7, z + rz * 2.45, 2.8, 6.4));
         }
+        if (/^(motorway|trunk)$/.test(props.highway || "") && !segment.tunnel)
+          for (let d = Math.ceil((a[3] + 0.01) / 400) * 400; d < b[3] - 0.01; d += 400) {
+            const t = (d - a[3]) / (b[3] - a[3]), p = interpolate(t);
+            const wD = widthAt(tapers, d, width);
+            lampGeo.push(...gantry(p[0], p[1], p[2], Math.atan2(b[0] - a[0], b[1] - a[1]), wD, lanes?.total || 2));
+          }
         if (lanes?.total > 1 && !segment.tunnel && !layout.junction) for (let d = Math.ceil((a[3] + 0.01) / 45) * 45; d < b[3] - 0.01; d += 45) {
           if (atJunction(d)) continue;
           const p = interpolate((d - a[3]) / (b[3] - a[3])), wD = widthAt(tapers, d, width), laneWidth = wD / lanes.total;

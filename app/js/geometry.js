@@ -173,3 +173,32 @@ export function busShelter(px, pz, groundY, dx, dz, width) {
   box(0.5, 0.35, 0.06, -2.2, 2.4, 0);
   return parts;
 }
+
+// Expressway gantry (ERP-style): two poles flanking the road with a beam
+// and one hanging antenna unit per lane. Plain geometries merge into a
+// metal material; pure for testability. Returns the part list.
+export function gantry(x, z, groundY, yaw, width, lanes) {
+  const parts = [];
+  const half = width / 2 + 0.8;
+  for (const side of [-1, 1]) {
+    const pole = new THREE.CylinderGeometry(0.12, 0.16, 6, 8);
+    const nx = Math.cos(yaw), nz = -Math.sin(yaw);
+    pole.translate(x + nx * half * side, groundY + 3, z + nz * half * side);
+    parts.push(pole);
+  }
+  const beam = new THREE.BoxGeometry(width + 1.6, 0.25, 0.3);
+  beam.rotateY(yaw);
+  beam.translate(x, groundY + 5.9, z);
+  parts.push(beam);
+  const count = Math.max(1, Math.min(6, Math.round(lanes) || 2));
+  for (let i = 0; i < count; i++) {
+    const lateral = (i + 0.5) * width / count - width / 2;
+    const unit = new THREE.BoxGeometry(0.4, 0.25, 0.5);
+    unit.rotateY(yaw);
+    // Local x maps to the road's left normal; reuse the pole-side basis.
+    const nx = Math.cos(yaw), nz = -Math.sin(yaw);
+    unit.translate(x + nx * lateral, groundY + 5.5, z + nz * lateral);
+    parts.push(unit);
+  }
+  return parts;
+}
