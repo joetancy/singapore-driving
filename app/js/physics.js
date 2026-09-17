@@ -30,6 +30,26 @@ export function touchesPolygon(x, z, rings, radius = 1.15) {
     r.some((a, i) => nearestPoint(x, z, a, r[(i + 1) % r.length]).d < radius),
   );
 }
+// Starting pose on a road: outermost legal lane matching the heading, with
+// headings corrected on one-way roads (reverse one-ways face backward).
+// Uses traffic-sim's left-hand lane offsets so spawns sit where forward
+// traffic drives. `road` is a getNearestRoad-style hit ({a, b, width,
+// laneLayout, x, z}); shared single-lane roads spawn centered.
+export function spawnPose(road, yaw) {
+  const dx = road.b[0] - road.a[0], dz = road.b[1] - road.a[1];
+  const l = Math.hypot(dx, dz) || 1;
+  let dir = Math.sin(yaw) * dx - Math.cos(yaw) * dz >= 0 ? 1 : -1;
+  if (road.laneLayout?.oneWay) dir = road.laneLayout.reverse ? -1 : 1;
+  const lanes = road.laneLayout;
+  const lateral = lanes?.total
+    ? (road.width / 2 - road.width / (2 * lanes.total)) * dir
+    : road.width * 0.24 * dir;
+  return {
+    x: road.x - (dz / l) * lateral,
+    z: road.z + (dx / l) * lateral,
+    yaw: Math.atan2(dx * dir, -dz * dir),
+  };
+}
 export function stepCar(state, input, dt) {
   const throttle = input.forward ? 1 : 0,
     brake = input.back ? 1 : 0,

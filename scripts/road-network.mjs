@@ -29,7 +29,9 @@ export function laneLayout(properties = {}) {
   const reverse = properties.oneway === "-1";
   let forward = count(properties["lanes:forward"]), backward = count(properties["lanes:backward"]);
   const total = count(properties.lanes);
-  if (oneWay) forward ||= total || Math.max(1, Math.round((roadWidth(properties) - 0.6) / 3.5));
+  // Untagged one-way counts derive from width with a 3.2 m target lane width.
+  const widthDerived = () => Math.max(1, Math.round((roadWidth(properties) - 0.6) / 3.2));
+  if (oneWay) forward ||= total || widthDerived();
   else if (!forward && !backward) {
     forward = total ? Math.ceil(total / 2) : 1;
     backward = total ? Math.floor(total / 2) : 1;
@@ -44,7 +46,13 @@ export function laneLayout(properties = {}) {
   if (properties.lanes && !total) warnings.push("invalid lanes");
   if (properties["lanes:forward"] && !count(properties["lanes:forward"])) warnings.push("invalid lanes:forward");
   if (properties["lanes:backward"] && !count(properties["lanes:backward"])) warnings.push("invalid lanes:backward");
-  const fallback = total || forward || Math.max(1, Math.round((roadWidth(properties) - 0.6) / 3.5));
+  if (!oneWay && total > 0 && forward + backward !== total) {
+    // Directional counts contradict the declared total: report and use the
+    // class fallback instead of inventing lanes.
+    warnings.push("inconsistent lanes");
+    forward = 1; backward = 1;
+  }
+  const fallback = total || forward || widthDerived();
   const result = { forward: reverse ? 0 : forward, backward: reverse ? fallback : backward,
     oneWay: oneWay || reverse, reverse, total: reverse ? fallback : forward + backward,
     turnLanes: properties["turn:lanes"] || "", maxspeed: properties.maxspeed || "" };
