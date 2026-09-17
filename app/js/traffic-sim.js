@@ -5,6 +5,38 @@ export const VEHICLES = {
   lorry: { width: 2.3, length: 7, height: 2.8, mass: 7000, speed: 12, color: 0xc4b9a5 },
 };
 export const trafficLimit = value => Math.round(Math.max(0, Math.min(100, Number(value) || 0)) * 0.6);
+// Independent fixed-time cycles (16 s: green 10, amber 2, red 4) with a
+// deterministic per-signal offset, so aspects survive chunk reloads.
+// Junction topology and player enforcement stay deferred: heads and stop
+// lines are scenery for the player, timing for nearby AI.
+export function signalCycle(id) {
+  let h = 0;
+  const s = String(id);
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return h % 16;
+}
+export function signalAspect(signal, time) {
+  const phase = (((time + signalCycle(signal.id)) % 16) + 16) % 16;
+  return phase < 10 ? "green" : phase < 12 ? "amber" : "red";
+}
+// Speed cap for stopping at a red (or comfortably amber) signal ahead on
+// the vehicle's own segment. Signals carry {id, roadId, t}; Infinity when
+// clear. Amber proceeds when too close to stop.
+export function signalLimit(byRoad, time, v) {
+  const r = v.road, len = Math.hypot(r.b[0] - r.a[0], r.b[1] - r.a[1]);
+  if (!len) return Infinity;
+  let cap = Infinity;
+  for (const s of byRoad.get(r.id) || []) {
+    const ahead = v.direction > 0 ? s.t - v.t : v.t - s.t;
+    if (ahead <= 0) continue;
+    const dist = ahead * len - (v.length / 2 + 1.5);
+    const aspect = signalAspect(s, time);
+    if (aspect === "green") continue;
+    if (aspect === "amber" && dist < v.speed * 0.7 + 3) continue;
+    cap = Math.min(cap, dist <= 0.5 ? 0 : Math.sqrt(6 * dist));
+  }
+  return cap;
+}
 const key = p => p.slice(0, 3).map(v => v.toFixed(3)).join(',');
 const length = r => Math.hypot(r.b[0] - r.a[0], r.b[1] - r.a[1]);
 export function allowedDirection(r, direction) {

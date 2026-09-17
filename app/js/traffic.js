@@ -1,8 +1,9 @@
 import * as THREE from '../../public/vendor/three.module.js';
-import { VEHICLES, trafficLimit, trafficGraph, allowedDirection, placeVehicle, advanceVehicle, collideVehicles } from './traffic-sim.js';
+import { VEHICLES, trafficLimit, trafficGraph, allowedDirection, placeVehicle, advanceVehicle, collideVehicles, signalLimit } from './traffic-sim.js';
 
 export function createTraffic(scene) {
-  let roads = [], graph = new Map(), target = 18, timer = 0;
+  let roads = [], graph = new Map(), target = 18, timer = 0, simTime = 0;
+  let signals = new Map();
   const vehicles = [];
   const box = new THREE.BoxGeometry(1, 1, 1);
   const bodyMaterials = Object.fromEntries(Object.entries(VEHICLES).map(([k, v]) => [k, new THREE.MeshStandardMaterial({ color: v.color, roughness: 0.65 })]));
@@ -30,8 +31,13 @@ export function createTraffic(scene) {
     scene.add(group); return group;
   }
   const remove = i => { scene.remove(vehicles[i].mesh); vehicles.splice(i, 1); };
-  function syncRoads(next) {
+  function syncRoads(next, signalList = []) {
     roads = next; graph = trafficGraph(roads);
+    signals = new Map();
+    for (const s of signalList) {
+      if (!signals.has(s.roadId)) signals.set(s.roadId, []);
+      signals.get(s.roadId).push(s);
+    }
     const ids = new Set(roads.map(r => r.id));
     for (let i = vehicles.length - 1; i >= 0; i--) if (!ids.has(vehicles[i].road.id)) remove(i);
   }
@@ -58,7 +64,7 @@ export function createTraffic(scene) {
     }
   }
   function step(dt, player, height) {
-    timer += dt;
+    timer += dt; simTime += dt;
     if (timer > 0.2) { timer = 0; if (vehicles.length < target) spawn(player); }
     const driver = { ...player, ...{width: 1.9, length: 4.5, mass: 1500, y: height} };
     for (let i = vehicles.length - 1; i >= 0; i--) {
@@ -66,6 +72,8 @@ export function createTraffic(scene) {
       const distance = Math.hypot(v.x - player.x, v.z - player.z);
       if (distance > 330 || (v.deadEnd && distance > 65)) { remove(i); continue; }
       let desired = v.deadEnd ? 0 : v.cruise;
+      // Nearby AI stops for red signals; the player is never restricted.
+      desired = Math.min(desired, signalLimit(signals, simTime, v));
       const fx = Math.sin(v.yaw), fz = -Math.cos(v.yaw);
       for (const q of [...vehicles, driver]) {
         if (q === v || Math.abs(q.y - v.y) > 1.5) continue;

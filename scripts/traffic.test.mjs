@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { VEHICLES, trafficLimit, trafficGraph, nextRoad, advanceVehicle, placeVehicle, collideVehicles } from '../app/js/traffic-sim.js';
+import { VEHICLES, trafficLimit, trafficGraph, nextRoad, advanceVehicle, placeVehicle, collideVehicles, signalCycle, signalAspect, signalLimit } from '../app/js/traffic-sim.js';
 const road = (id, a, b, featureId = id) => ({id, a, b, featureId, width: 7, connections: ['b'], laneLayout: {forward: 1, backward: 1, total: 2}});
 const a = road('a', [0, 0, 0], [10, 0, 0]);
 const b = road('b', [10, 0, 0], [20, 0, 0]);
@@ -53,3 +53,34 @@ try {
   assert.equal(scene.children.length, 0, 'Unloaded roads must remove their traffic');
 } finally { Math.random = originalRandom; }
 console.log('Traffic mesh spawning, Off setting, and chunk cleanup checks passed');
+
+// Fixed-time signal cycles with deterministic offsets; AI speed caps for
+// stopping at red (amber proceeds when too close to stop).
+const off = signalCycle('sig-test');
+assert(off >= 0 && off < 16 && off === signalCycle('sig-test'));
+const greenT = (16 - off) % 16;
+assert.equal(signalAspect({ id: 'sig-test' }, greenT), 'green');
+assert.equal(signalAspect({ id: 'sig-test' }, greenT + 16), 'green');
+assert.equal(signalAspect({ id: 'sig-test' }, greenT + 10), 'amber');
+assert.equal(signalAspect({ id: 'sig-test' }, greenT + 12), 'red');
+assert.equal(signalAspect({ id: 'sig-test' }, greenT + 15.9), 'red');
+const seg = { id: 'r', a: [0, 0, 0], b: [100, 0, 0] };
+const off1 = signalCycle('s1');
+const redT = 16 - off1 + 12.5, greenT1 = 16 - off1, amberT = 16 - off1 + 10.5;
+const byRoad = new Map([['r', [{ id: 's1', roadId: 'r', t: 0.8 }]]]);
+const car = { road: seg, direction: 1, t: 0.5, speed: 10, length: 4.2 };
+const cap = signalLimit(byRoad, redT, car);
+assert(Math.abs(cap - Math.sqrt(6 * 26.4)) < 1e-9);
+const braking = signalLimit(byRoad, redT, { ...car, t: 0.7 });
+assert(Math.abs(braking - Math.sqrt(6 * 6.4)) < 1e-9 && braking < car.speed);
+assert.equal(signalLimit(byRoad, greenT1, car), Infinity);
+assert.equal(signalLimit(byRoad, redT, { ...car, t: 0.9 }), Infinity, 'Passed signals do not cap');
+assert.equal(signalLimit(new Map(), redT, car), Infinity);
+assert.equal(signalLimit(byRoad, redT, { ...car, road: { ...seg, id: 'q' } }), Infinity);
+const backCap = signalLimit(byRoad, redT, { ...car, direction: -1, t: 0.9 });
+assert(Math.abs(backCap - Math.sqrt(6 * 6.4)) < 1e-9);
+assert.equal(signalLimit(byRoad, redT, { ...car, t: 0.77 }), 0, 'Hold at the stop line');
+assert.equal(signalLimit(byRoad, amberT, { ...car, t: 0.75 }), Infinity, 'Amber proceeds when too close');
+assert(signalLimit(byRoad, amberT, car) < Infinity, 'Amber brakes from distance');
+assert.equal(signalLimit(byRoad, redT, { ...car, road: { ...seg, a: [0, 0, 0], b: [0, 0, 0] } }), Infinity);
+console.log('Signal cycles and AI stop-line checks passed');

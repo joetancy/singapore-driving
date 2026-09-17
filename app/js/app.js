@@ -177,6 +177,7 @@ function createChunk(data) {
     segments = [],
     lampPoints = [],
     blocks = [],
+    roadSignals = [],
     buildingBases = data.features
       .filter((f) => {
         const p = f.properties || {};
@@ -197,7 +198,8 @@ function createChunk(data) {
         const hit = nearestPoint(x, z, pts[i - 1], pts[i]);
         const y = (pts[i - 1][2] || 0) + ((pts[i][2] || 0) - (pts[i - 1][2] || 0)) * hit.t;
         if ((height == null || Math.abs(y - height) < 1) && (!best || hit.d < best.d))
-          best = { ...hit, a: pts[i - 1], b: pts[i], width, y };
+          best = { ...hit, a: pts[i - 1], b: pts[i], width, y, featureId: f.id, index: i - 1,
+            laneLayout: f.properties?.laneLayout };
       }
     }
     return best;
@@ -214,6 +216,7 @@ function createChunk(data) {
       const signal = trafficSignal(sx, sz, road.y, dx, dz, road.width);
       signalGeo.push(...signal.housing);
       signalLampGeo.push(...signal.lamps);
+      roadSignals.push({ id: f.id, roadId: `${road.featureId}:${road.index}`, t: road.t });
       for (const line of stopLines(sx, sz, road.y, dx, dz, road.width, road.laneLayout)) {
         markGeo.push(quad([line.ax, line.az], [line.bx, line.bz], 0.45, line.y + 0.09, "#e7e8d6"));
       }
@@ -416,7 +419,7 @@ function createChunk(data) {
   mergeInto(group, tunnelLightGeo, worldMaterials.tunnelLamp);
   mergeInto(group, tunnelGlowGeo, worldMaterials.tunnelGlow);
   mergeInto(group, buildingGeo, worldMaterials.building, true);
-  group.userData = { segments, blocks, lamps: lampPoints };
+  group.userData = { segments, blocks, lamps: lampPoints, signals: roadSignals };
   return group;
 }
 function createAreas(data) {
@@ -449,15 +452,17 @@ function disposeGroup(group) {
 function rebuildCollisionLists() {
   roads = [];
   obstacles = [];
+  const roadSignals = [];
   for (const c of chunkState.values()) {
     if (c.group) {
       roads.push(...c.group.userData.segments);
       obstacles.push(...c.group.userData.blocks);
+      roadSignals.push(...c.group.userData.signals || []);
     }
   }
   updateMinimapRoads();
   surfaces = roadIndex(roads);
-  traffic?.syncRoads(roads);
+  traffic?.syncRoads(roads, roadSignals);
   updateTunnelOpenings();
   updateNightLights();
 }
