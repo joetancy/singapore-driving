@@ -152,6 +152,23 @@ assert(!layout.segments.get('lower')[0].left);
 assert(!layout.segments.get('lower')[0].right);
 const isolated = prepareLayout([overlapFeatures[0]], overlapSamples);
 assert(!isolated.segments.get('lower')[0].noLamps);
+// Yellow box hatching needs a connected angled meeting: the side road shares
+// the junction node with the through road. The same geometry without
+// connections (overpass approaches, unsplit gaps) must not hatch.
+const linkedPrep = prepareRoads([
+  road('cross-a', [[103.849, 1.29], [103.85, 1.29], [103.851, 1.29]]),
+  road('cross-b', [[103.85, 1.29], [103.85, 1.2905]]),
+], center);
+const linkedFeatures = [
+  road('cross-a', [[103.849, 1.29], [103.85, 1.29], [103.851, 1.29]]),
+  road('cross-b', [[103.85, 1.29], [103.85, 1.2905]]),
+];
+const linkedLayout = prepareLayout(linkedFeatures, linkedPrep.samples, linkedPrep.connections);
+assert(linkedLayout.segments.get('cross-b')[0].junction);
+assert(linkedLayout.segments.get('cross-b')[0].crossing);
+const unlinkedLayout = prepareLayout(linkedFeatures, linkedPrep.samples);
+assert(unlinkedLayout.segments.get('cross-b')[0].junction);
+assert(!unlinkedLayout.segments.get('cross-b')[0].crossing);
 const openPassage = tunnelPassage([0, 0, -4, 0, 0, 1], [10, 0, -4, 10, 0, 1], 12, 3.5, { left: true });
 assert.equal(openPassage.attributes.position.count, 12); // Remaining wall and roof.
 openPassage.dispose();
@@ -220,7 +237,7 @@ assert(!fittedTunnels.segments.get('lower')[0].left, 'Adjacent tunnels must reta
 
 // Shared preparation entry: one representation for rendering, contact,
 // clearance widths and spawn data, with explicit surface polygons.
-assert.equal(PREPARED_ROAD_SCHEMA_VERSION, 9);
+assert.equal(PREPARED_ROAD_SCHEMA_VERSION, 10);
 const sharedFeatures = [
   road('shared-ground', [[103.85, 1.29], [103.851, 1.29]], { highway: 'primary' }),
   road('shared-bridge', [[103.851, 1.29], [103.852, 1.29]], { highway: 'primary', bridge: 'yes' }),

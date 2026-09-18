@@ -14,7 +14,7 @@ import { prepareLayout } from "./road-layout.mjs";
 
 // Increment when derived road output changes shape or meaning; the build
 // writes this into the manifest and requires a complete rebuild on mismatch.
-export const PREPARED_ROAD_SCHEMA_VERSION = 9;
+export const PREPARED_ROAD_SCHEMA_VERSION = 10;
 
 const sourceId = (id) => String(id).replace(/-\d+-\d+$/, "");
 
@@ -47,7 +47,7 @@ export function taperZones(samples, width, startNeighbor, endNeighbor) {
 
 export function prepareAssets(features, center) {
   const prepared = prepareRoads(features, center);
-  const layout = prepareLayout(features, prepared.samples);
+  const layout = prepareLayout(features, prepared.samples, prepared.connections);
   const widths = new Map();
   const roads = [];
   for (const f of features) {

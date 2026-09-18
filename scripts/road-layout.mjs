@@ -8,9 +8,19 @@ const nearest = (p, a, b) => {
 
 // Build globally before writing chunks: a neighbouring tile must participate
 // in exactly the same junction, barrier and street-lamp clearance decisions.
-export function prepareLayout(features, samples) {
+// `connections` (from prepareRoads: feature id -> {start, end} neighbour ids)
+// marks features that truly meet at a shared node. Yellow box hatching must
+// only flag connected angled meetings: unconnected same-level overlaps are
+// overpass approaches and data gaps, not junctions with legal crossings.
+export function prepareLayout(features, samples, connections = null) {
   const cells = new Map(), edges = [], result = new Map();
   const widths = new Map();
+  const linked = (a, b) => {
+    if (!connections) return false;
+    const ca = connections.get(a), cb = connections.get(b);
+    return (ca && (ca.start.includes(b) || ca.end.includes(b))) ||
+      (cb && (cb.start.includes(a) || cb.end.includes(a)));
+  };
   const size = 40;
   for (const f of features) {
     const pts = samples.get(f.id) || [], width = roadWidth(f.properties);
@@ -98,6 +108,14 @@ export function prepareLayout(features, samples) {
           if (nearest(edge, q.a, q.b).d < q.width / 2 + 0.8) flags[side === -1 ? 'right' : 'left'] = true;
         }
         if (hit.d < (e.width + q.width) / 2) flags.junction = true;
+        // Genuine crossings meet at an angle between features that are
+        // actually connected. Near-parallel overlaps (dual carriageways,
+        // ramp merges) and unconnected overlaps (overpass approaches at a
+        // coincident height, unsplit data gaps) share the junction flag but
+        // must not paint yellow box hatching. The renderer hatches on
+        // `crossing`.
+        if (hit.d < (e.width + q.width) / 2 && alignment < 0.8 && linked(e.f.id, q.f.id))
+          flags.crossing = true;
       }
       // No support columns through a road below an elevated crossing.
       const midpoint = e.a.map((v, i) => (v + e.b[i]) / 2), under = nearest(midpoint, q.a, q.b);

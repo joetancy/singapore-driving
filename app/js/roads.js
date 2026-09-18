@@ -23,8 +23,17 @@ export function drivingContact(index, state, active, height) {
 const nodeKey = (p) => p.slice(0, 3).map((v) => v.toFixed(3)).join(",");
 
 export function roadIndex(roads) {
-  const cells = new Map(), nodes = new Map(), byId = new Map();
+  const index = { cells: new Map(), nodes: new Map(), byId: new Map() };
+  indexAddRoads(index, roads);
+  return index;
+}
+
+// Incremental insert for streaming: same bucketing as roadIndex without
+// rebuilding the whole map when one chunk arrives.
+export function indexAddRoads(index, roads) {
+  const { cells, nodes, byId } = index;
   for (const r of roads) {
+    if (byId.has(r.id)) continue;
     byId.set(r.id, r);
     for (const p of [r.a, r.b]) {
       const k = nodeKey(p);
@@ -38,7 +47,25 @@ export function roadIndex(roads) {
         cells.get(k).push(r);
       }
   }
-  return { cells, nodes, byId };
+}
+
+// Incremental removal for chunk unloads. Unloads are rare (only after
+// driving ~400 m past a chunk), so a full bucket scan is affordable and
+// keeps per-frame streaming work near zero.
+export function indexRemoveRoads(index, ids) {
+  const gone = new Set(ids);
+  if (!gone.size) return;
+  for (const [k, list] of index.cells) {
+    const keep = list.filter((r) => !gone.has(r.id));
+    if (keep.length !== list.length)
+      (keep.length ? index.cells.set(k, keep) : index.cells.delete(k));
+  }
+  for (const [k, list] of index.nodes) {
+    const keep = list.filter((r) => !gone.has(r.id));
+    if (keep.length !== list.length)
+      (keep.length ? index.nodes.set(k, keep) : index.nodes.delete(k));
+  }
+  for (const id of gone) index.byId.delete(id);
 }
 
 export function surfaceAt(index, x, z, active = null, height = 0) {

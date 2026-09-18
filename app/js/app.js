@@ -8,14 +8,13 @@ import {
   ringsOf,
   quad,
   tunnelPassage,
-  trafficSignal,
   busShelter,
   gantry,
   treeGeometries,
 } from "./geometry.js";
 import { loadPreferences, saveNight, saveSpawn, loadTraffic, saveTraffic, loadNav, saveNav, clearNav } from "./storage.js";
 import { createTraffic } from "./traffic.js";
-import { roadIndex, surfaceAt, sampleHeight, drivingContact, retainElevated, pickNightLights, widthAt, stopLines, hatchBars, findRoute, turnManeuver } from "./roads.js";
+import { roadIndex, indexAddRoads, indexRemoveRoads, surfaceAt, sampleHeight, drivingContact, retainElevated, pickNightLights, widthAt, hatchBars, findRoute, turnManeuver } from "./roads.js";
 import { createSpawnPicker } from "./spawn-map.js";
 import {
   clamp,
@@ -56,13 +55,13 @@ let roads = [],
   boundaryPolygons = [],
   areas = [],
   chunkState = new Map(),
-  lastStream = 0,
   lastHud = 0,
   distance = 0;
 let state = { x: 0, z: 0, yaw: 0, speed: 0, steer: 0 },
   clock = new THREE.Clock(),
   smoothGround = 0,
   nearRoad = null,
+  scraping = false,
   frame = 0;
 const lookTarget = new THREE.Vector3(),
   cameraTarget = new THREE.Vector3(),
@@ -179,7 +178,7 @@ function createChunk(data, bbox) {
     tunnelRoadGeo = [],
     pavementGeo = [],
     markGeo = [], tunnelGeo = [], lampGeo = [], lampHeadGeo = [],
-    lampGlowGeo = [], signalGeo = [], signalLampGeo = [],
+    lampGlowGeo = [],
     portalGeo = [],
     portalInsetGeo = [],
     tunnelLightGeo = [],
@@ -187,7 +186,6 @@ function createChunk(data, bbox) {
     segments = [],
     lampPoints = [],
     blocks = [],
-    roadSignals = [],
     buildingBases = data.features
       .filter((f) => {
         const p = f.properties || {};
@@ -250,22 +248,6 @@ function createChunk(data, bbox) {
       // Stray nodes, off-grade segments and degenerate segments get no shelter.
       if (!road || road.d > road.width / 2 + 2 || lo < -0.3 || hi > 0.3 || Math.hypot(dx, dz) < 0.01) continue;
       lampGeo.push(...busShelter(sx, sz, road.y, dx, dz, road.width));
-      continue;
-    }
-    if (f.geometry.type === "Point" && props.highway === "traffic_signals") {
-      const [sx, sz] = point(f.geometry.coordinates);
-      const road = roadAt(sx, sz);
-      const base = Math.min(road?.a[2] ?? 0, road?.b[2] ?? 0);
-      const dx = (road?.b[0] ?? 0) - (road?.a[0] ?? 0), dz = (road?.b[1] ?? 0) - (road?.a[1] ?? 0);
-      // Stray nodes, tunnel interiors and degenerate segments get no head.
-      if (!road || road.d > road.width / 2 + 2 || base < -0.3 || Math.hypot(dx, dz) < 0.01) continue;
-      const signal = trafficSignal(sx, sz, road.y, dx, dz, road.width);
-      signalGeo.push(...signal.housing);
-      signalLampGeo.push(...signal.lamps);
-      roadSignals.push({ id: f.id, roadId: `${road.featureId}:${road.index}`, t: road.t });
-      for (const line of stopLines(sx, sz, road.y, dx, dz, road.width, road.laneLayout)) {
-        markGeo.push(quad([line.ax, line.az], [line.bx, line.bz], 0.45, line.y + 0.09, "#e7e8d6"));
-      }
       continue;
     }
     if (f.geometry.type === "Point" && props.highway === "crossing") {
@@ -419,7 +401,16 @@ function createChunk(data, bbox) {
           if (layout[side === -1 ? "right" : "left"]) continue;
           markGeo.push(ribbon(a, b, 0.12, 0.09, "#e7e8d6", [side * (wa / 2 - 0.3), side * (wb / 2 - 0.3)]));
         }
-        if (hatchable[i] && !segment.tunnel) for (const bar of hatchBars(a[3], b[3])) {
+        // Yellow box hatching marks genuine angled crossings (prepared
+        // `crossing` flag). Legacy assets without the flag fall back to the
+        // short-run heuristic for the broad `junction` overlap flag. Boxes
+        // only belong at significant signalised junctions, so minor roads
+        // (service aisles, residential streets) never hatch even where they
+        // meet at an angle.
+        const majorJunction = /^(motorway|trunk|primary|secondary|tertiary)/.test(props.highway || "");
+        const hatch = majorJunction && (layout.crossing === true ||
+          (layout.crossing === undefined && hatchable[i]));
+        if (hatch && !segment.tunnel) for (const bar of hatchBars(a[3], b[3])) {
           const s = bar.flip ? 1 : -1;
           const wLo = widthAt(tapers, bar.lo, width) / 2 - 0.35;
           const wHi = widthAt(tapers, bar.hi, width) / 2 - 0.35;
@@ -555,15 +546,13 @@ function createChunk(data, bbox) {
   mergeInto(group, markGeo.filter(Boolean), worldMaterials.mark);
   mergeInto(group, lampGeo, worldMaterials.lamp);
   mergeInto(group, lampHeadGeo, worldMaterials.lampHead);
-  mergeInto(group, signalGeo, worldMaterials.signal);
-  mergeInto(group, signalLampGeo, worldMaterials.signalLamp);
   mergeInto(group, lampGlowGeo, worldMaterials.lampGlow);
   mergeInto(group, portalGeo, worldMaterials.tunnelPortal);
   mergeInto(group, portalInsetGeo, worldMaterials.tunnelInset);
   mergeInto(group, tunnelLightGeo, worldMaterials.tunnelLamp);
   mergeInto(group, tunnelGlowGeo, worldMaterials.tunnelGlow);
   mergeInto(group, buildingGeo, worldMaterials.building, true);
-  group.userData = { segments, blocks, lamps: lampPoints, signals: roadSignals, trees: treeColliders };
+  group.userData = { segments, blocks, lamps: lampPoints, trees: treeColliders };
   return group;
 }
 function createAreas(data) {
@@ -595,25 +584,33 @@ function disposeGroup(group) {
   scene.remove(group);
 }
 function rebuildCollisionLists() {
+  // Full rebuild: used after forced loads (startup, spawn teleport) when a
+  // single hitch hides behind the loading dialog. Per-frame streaming below
+  // uses the incremental attach/detach path instead.
   roads = [];
   obstacles = [];
   treeColliders = [];
-  const roadSignals = [];
-  for (const c of chunkState.values()) {
-    if (c.group) {
-      roads.push(...c.group.userData.segments);
-      obstacles.push(...c.group.userData.blocks);
-      treeColliders.push(...c.group.userData.trees || []);
-      roadSignals.push(...c.group.userData.signals || []);
-    }
+  minimapPaths.clear();
+  for (const [id, c] of chunkState) {
+    if (!c.group) continue;
+    tagChunkGroup(id, c.group);
+    const u = c.group.userData;
+    roads.push(...u.segments);
+    obstacles.push(...u.blocks);
+    treeColliders.push(...u.trees || []);
+    minimapPaths.set(id, minimapPath(u.segments));
   }
   updateMinimapRoads();
   surfaces = roadIndex(roads);
   // Streaming can complete the missing portion of a local route.
   if (navigation) routeRoadId = null;
-  traffic?.syncRoads(roads, roadSignals);
+  traffic?.syncRoads(roads);
   updateTunnelOpenings();
   updateNightLights();
+  trafficDirty = false;
+  minimapDirty = false;
+  lastTrafficSync = performance.now();
+  lastMinimapSync = performance.now();
 }
 function updateNightLights() {
   for (const light of nightLights) scene.remove(light);
@@ -643,95 +640,239 @@ function updateTunnelOpenings() {
   }
 }
 function updateMinimapRoads() {
-  const d = roads
-    .map((r) => `M${r.a[0]},${r.a[1]}L${r.b[0]},${r.b[1]}`)
-    .join("");
-  for (const id of ["map-roads"]) {
-    const map = $(id);
-    if (map) map.setAttribute("d", d);
-  }
+  const map = $("map-roads");
+  if (map) map.setAttribute("d", [...minimapPaths.values()].join(""));
   updateRouteLine();
 }
 function updateRouteLine() {
   const path = $("map-route");
   if (path) path.setAttribute("d", route?.steps.map(({ road }) => `M${road.a[0]},${road.a[1]}L${road.b[0]},${road.b[1]}`).join("") || "");
 }
-// Chunk streaming runs one pass at a time; overlapping animate() triggers
-// join (background) or wait-then-reload (forced teleport/initial load).
-let streamActive = null;
-async function streamChunks(force = false) {
-  if (streamActive) {
-    if (!force) return streamActive;
-    try { await streamActive; } catch { /* reload below */ }
+// ---- Incremental chunk streaming ----
+// Design: the old code loaded every missing chunk in one Promise.all burst
+// (one long freeze), then a 2-per-500ms trickle (repeated stalls at
+// unloaded road edges plus a full collision/minimap/traffic rebuild per
+// pass). Instead:
+// - fetches run ahead with limited concurrency, prioritised by distance to
+//   the car and to a velocity lookahead point, so the road ahead arrives
+//   before the car does;
+// - parsed chunks queue up and at most ~7 ms of synchronous building runs
+//   per animation frame, after the scene renders;
+// - collision lists, the spatial index and the minimap update
+//   incrementally per chunk; the expensive full rebuilds (traffic graph,
+//   tunnel cutouts) are throttled by time/distance.
+const chunkById = new Map();
+const fetchInflight = new Map();
+const readyChunks = new Map();
+const minimapPaths = new Map();
+let wantedCache = null;
+let trafficDirty = false, lastTrafficSync = 0;
+let minimapDirty = false, lastMinimapSync = 0;
+let lastTunnelSync = { x: 0, z: 0, at: 0 };
+let lastFetchToast = 0;
+const minimapPath = (segments) =>
+  segments.map((r) => `M${r.a[0]},${r.a[1]}L${r.b[0]},${r.b[1]}`).join("");
+function streamRadii() {
+  const load = innerWidth < 768 ? 900 : 1400;
+  return { load, unload: load + 400 };
+}
+// Projected bbox corners are cached at init; this is pure arithmetic.
+function chunkDistance(c, x, z) {
+  const dx = Math.max(c._x0 - x, 0, x - c._x1),
+    dz = Math.max(c._z0 - z, 0, z - c._z1);
+  return Math.hypot(dx, dz);
+}
+function lookaheadPoint() {
+  const ahead = clamp(Math.abs(state.speed) * 4, 0, 900) * Math.sign(state.speed || 1);
+  return {
+    x: state.x + Math.sin(state.yaw) * ahead,
+    z: state.z - Math.cos(state.yaw) * ahead,
+  };
+}
+function refreshWanted() {
+  const now = performance.now();
+  if (
+    wantedCache &&
+    Math.hypot(state.x - wantedCache.x, state.z - wantedCache.z) < 20 &&
+    now - wantedCache.at < 250
+  )
+    return wantedCache;
+  const { load } = streamRadii(), L = lookaheadPoint(), missing = [];
+  for (const c of manifest.chunks) {
+    if (chunkState.has(c.id) || fetchInflight.has(c.id) || readyChunks.has(c.id)) continue;
+    const dCar = chunkDistance(c, state.x, state.z);
+    let score = dCar;
+    if (dCar >= load) {
+      const dLook = chunkDistance(c, L.x, L.z);
+      if (dLook >= 800) continue;
+      score = dLook;
+    } else {
+      score = Math.min(dCar, chunkDistance(c, L.x, L.z));
+    }
+    missing.push({ c, score });
   }
-  streamActive = loadChunks(force);
-  try {
-    await streamActive;
-  } finally {
-    streamActive = null;
+  missing.sort((a, b) => a.score - b.score);
+  wantedCache = { x: state.x, z: state.z, at: now, missing: missing.map((m) => m.c) };
+  return wantedCache;
+}
+// Tag entries with their owner chunk so unloads can filter incrementally.
+function tagChunkGroup(id, group) {
+  const u = group.userData;
+  if (u.chunkId === id) return;
+  u.chunkId = id;
+  for (const s of u.segments) s.chunkId = id;
+  for (const b of u.blocks) b.chunkId = id;
+  for (const t of u.trees || []) t.chunkId = id;
+}
+function attachChunk(id) {
+  const u = chunkState.get(id)?.group?.userData;
+  if (!u) return;
+  roads.push(...u.segments);
+  obstacles.push(...u.blocks);
+  treeColliders.push(...u.trees || []);
+  indexAddRoads(surfaces, u.segments);
+  minimapPaths.set(id, minimapPath(u.segments));
+  minimapDirty = true;
+  trafficDirty = true;
+  // Streaming can complete the missing portion of a local route.
+  if (navigation) routeRoadId = null;
+}
+function detachChunk(id) {
+  const entry = chunkState.get(id);
+  chunkState.delete(id);
+  minimapPaths.delete(id);
+  minimapDirty = true;
+  trafficDirty = true;
+  if (!entry?.group) return;
+  const gone = new Set(entry.group.userData.segments.map((s) => s.id));
+  disposeGroup(entry.group);
+  roads = roads.filter((r) => !gone.has(r.id));
+  obstacles = obstacles.filter((b) => b.chunkId !== id);
+  treeColliders = treeColliders.filter((t) => t.chunkId !== id);
+  indexRemoveRoads(surfaces, gone);
+}
+function unloadFarChunks() {
+  const { unload } = streamRadii();
+  for (const [id, entry] of chunkState) {
+    if (!entry.group) continue;
+    const c = chunkById.get(id);
+    if (!c || chunkDistance(c, state.x, state.z) > unload) detachChunk(id);
   }
 }
-// Yield one frame so the render loop can paint between heavy synchronous
-// chunk builds. Timer-based: requestAnimationFrame would stall a hidden tab.
-const yieldToEventLoop = () => new Promise((resolve) => setTimeout(resolve, 0));
-async function loadChunks(force = false) {
-  let changed = false;
-  const loadRadius = innerWidth < 768 ? 900 : 1400,
-    unloadRadius = loadRadius + 400,
-    distanceTo = (c) => {
-      const a = point([c.bbox[0], c.bbox[1]]),
-        b = point([c.bbox[2], c.bbox[3]]),
-        dx = Math.max(
-          Math.min(a[0], b[0]) - state.x,
-          0,
-          state.x - Math.max(a[0], b[0]),
-        ),
-        dz = Math.max(
-          Math.min(a[1], b[1]) - state.z,
-          0,
-          state.z - Math.max(a[1], b[1]),
-        );
-      return Math.hypot(dx, dz);
+function startFetch(c) {
+  chunkState.set(c.id, { loading: true });
+  const p = json("./data/" + c.file).then(
+    (data) => {
+      fetchInflight.delete(c.id);
+      readyChunks.set(c.id, { chunk: c, data });
     },
-    wanted = manifest.chunks.filter((c) => distanceTo(c) < loadRadius);
-  for (const [id, c] of chunkState) {
-    const chunk = manifest.chunks.find((x) => x.id === id);
-    if (chunk && distanceTo(chunk) > unloadRadius && c.group) {
-      disposeGroup(c.group);
+    (e) => {
+      fetchInflight.delete(c.id);
+      chunkState.delete(c.id);
+      if (performance.now() - lastFetchToast > 5000) {
+        lastFetchToast = performance.now();
+        toast("A map section could not load. Retrying…");
+      }
+      console.error(e);
+    },
+  );
+  fetchInflight.set(c.id, p);
+}
+function pickReadyChunk() {
+  const { unload } = streamRadii(), L = lookaheadPoint();
+  let best = null, bestScore = Infinity;
+  for (const [id, r] of readyChunks) {
+    const dCar = chunkDistance(r.chunk, state.x, state.z);
+    if (dCar > unload) {
+      readyChunks.delete(id);
       chunkState.delete(id);
-      changed = true;
+      continue;
+    }
+    const score = Math.min(dCar, chunkDistance(r.chunk, L.x, L.z));
+    if (score < bestScore) { bestScore = score; best = id; }
+  }
+  if (best == null) return null;
+  const r = readyChunks.get(best);
+  readyChunks.delete(best);
+  return r;
+}
+function insertChunkGroup(id, group) {
+  tagChunkGroup(id, group);
+  scene.add(group);
+  chunkState.set(id, { group });
+}
+function pumpStream(frameStart) {
+  const now = performance.now();
+  unloadFarChunks();
+  const { missing } = refreshWanted();
+  if (readyChunks.size < 8) {
+    for (const c of missing) {
+      if (fetchInflight.size >= 4) break;
+      if (chunkState.has(c.id) || fetchInflight.has(c.id) || readyChunks.has(c.id)) continue;
+      startFetch(c);
     }
   }
-  // Nearest chunks first so the road under the car appears before distant
-  // scenery. Background passes build a small budget per tick and yield
-  // between chunks; a burst of N new chunks used to block the main thread
-  // for N x createChunk() inside one Promise.all. Forced loads (startup,
-  // spawn teleport) still fetch everything, but one chunk at a time with
-  // yields so the loading indicator can paint.
-  const missing = wanted
-    .filter((c) => !chunkState.has(c.id))
-    .map((c) => ({ chunk: c, distance: distanceTo(c) }))
-    .sort((a, b) => a.distance - b.distance)
-    .map(({ chunk }) => chunk);
-  const budget = force ? missing.length : 2;
-  for (const c of missing.slice(0, budget)) {
-    chunkState.set(c.id, { loading: true });
+  // Synchronous building happens here, capped so streaming work never eats
+  // a whole frame. One dense chunk can exceed the budget alone; the remainder
+  // simply continues next frame instead of compounding into a burst.
+  const BUDGET_MS = 7;
+  while (readyChunks.size && performance.now() - frameStart < BUDGET_MS) {
+    const pick = pickReadyChunk();
+    if (!pick) break;
     try {
-      const data = await json("./data/" + c.file);
-      const group = createChunk(data, c.bbox);
-      scene.add(group);
-      chunkState.set(c.id, { group });
-      changed = true;
+      insertChunkGroup(pick.chunk.id, createChunk(pick.data, pick.chunk.bbox));
+      attachChunk(pick.chunk.id);
     } catch (e) {
-      chunkState.delete(c.id);
-      if (force) throw e;
-      toast("A map section could not load. Retrying…");
+      chunkState.delete(pick.chunk.id);
       console.error(e);
     }
-    // Let one frame render before the next synchronous build.
-    await yieldToEventLoop();
   }
-  if (changed) rebuildCollisionLists();
+  if (minimapDirty && now - lastMinimapSync > 500) {
+    lastMinimapSync = now;
+    minimapDirty = false;
+    updateMinimapRoads();
+  }
+  if (trafficDirty && traffic && now - lastTrafficSync > 2000) {
+    lastTrafficSync = now;
+    trafficDirty = false;
+    traffic.syncRoads(roads);
+  }
+  const moved = Math.hypot(state.x - lastTunnelSync.x, state.z - lastTunnelSync.z);
+  if (moved > 80 || now - lastTunnelSync.at > 3000) {
+    lastTunnelSync = { x: state.x, z: state.z, at: now };
+    updateTunnelOpenings();
+  }
+}
+// Forced loads (startup, spawn teleport): everything wanted, fetched with
+// modest concurrency and built one at a time with yields so the loading
+// indicator paints, then a single full collision rebuild.
+async function ensureChunksLoaded() {
+  const { load } = streamRadii();
+  const missing = manifest.chunks
+    .filter((c) => !chunkState.has(c.id) && chunkDistance(c, state.x, state.z) < load)
+    .sort((a, b) => chunkDistance(a, state.x, state.z) - chunkDistance(b, state.x, state.z));
+  for (const c of missing) chunkState.set(c.id, { loading: true });
+  const queue = missing.slice();
+  const workers = Array.from({ length: 6 }, async () => {
+    while (queue.length) {
+      const c = queue.shift();
+      try {
+        readyChunks.set(c.id, { chunk: c, data: await json("./data/" + c.file) });
+      } catch (e) {
+        chunkState.delete(c.id);
+        throw e;
+      }
+    }
+  });
+  await Promise.all(workers);
+  for (const c of missing) {
+    const r = readyChunks.get(c.id);
+    if (!r) continue;
+    readyChunks.delete(c.id);
+    insertChunkGroup(c.id, createChunk(r.data, c.bbox));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  rebuildCollisionLists();
 }
 function box(w, h, d, material, x = 0, y = 0, z = 0) {
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
@@ -879,7 +1020,7 @@ function openSpawnPicker(mode = "spawn") {
       const before = { ...state }, previousSelection = spawnSelection;
       state.x = hit.x; state.z = hit.z;
       try {
-        await streamChunks(true);
+        await ensureChunksLoaded();
         const selection = { roadId: hit.id, progress: hit.a[3] + (hit.b[3] - hit.a[3]) * hit.t };
         spawnSelection = selection;
         const candidate = getNearestRoad(hit.x, hit.z);
@@ -892,7 +1033,7 @@ function openSpawnPicker(mode = "spawn") {
         toast("Starting road saved");
       } catch (e) {
         state = before; spawnSelection = previousSelection;
-        await streamChunks();
+        await ensureChunksLoaded();
         throw e;
       }
     },
@@ -970,6 +1111,7 @@ function resetCar(announce = true) {
     speed: 0,
     steer: 0,
   };
+  scraping = false;
   let nearest = getNearestRoad(state.x, state.z);
   if (!nearest && spawnSelection) {
     spawnSelection = null;
@@ -1189,10 +1331,11 @@ function animate() {
       handbrake: down("Space"),
     };
     const steps = Math.max(1, Math.ceil(dt / 0.012));
-    for (let i = 0; i < steps; i++) {
-      const oldX = state.x,
-        oldZ = state.z;
-      stepCar(state, input, dt / steps);
+    // Collision probe for a candidate position. Pure except for the tunnel
+    // slide nudge inside drivingContact, which each probe overwrites.
+    const probeMove = (x, z) => {
+      state.x = x;
+      state.z = z;
       const contact = drivingContact(surfaces, state, activeRoad, smoothGround);
       const ll = projection.invert([state.x, state.z]),
         bb = manifest.bounds;
@@ -1209,43 +1352,82 @@ function animate() {
       const water =
         !contact &&
         waterPolygons.some((r) => inPolygon(state.x, state.z, r));
-      if (outside || water || blocked(
+      const hitBuilding = blocked(
         state.x,
         state.z,
         contact?.y ?? smoothGround,
         contact,
-      )) {
-        state.x = oldX;
-        state.z = oldZ;
-        state.speed = 0;
-        if (now - lastHud > 2000) {
-          lastHud = now;
-          toast(
-            outside
-              ? "Edge of the available map"
-              : water
-                ? "Stay on land — reverse to return"
-                : "Building ahead — reverse to return",
-          );
-        }
-      } else if (!contact && retainElevated(activeRoad, smoothGround, state.x, state.z)) {
-        // Unsupported elevated edge: past a deck end or into a chunk that
-        // has not loaded yet. Stop at the last supported position and
-        // height instead of snapping to ground level.
-        state.x = oldX;
-        state.z = oldZ;
-        state.speed = 0;
-        if (!chunkLoadedAt(state.x, state.z)) {
-          lastStream = 0; // Let streaming retry the missing section.
-          if (now - lastHud > 2000) {
-            lastHud = now;
-            toast("Loading road ahead…");
+      );
+      if (outside || water || hitBuilding)
+        return {
+          res: "blocked",
+          contact,
+          kind: outside ? "outside" : water ? "water" : "building",
+        };
+      if (!contact && retainElevated(activeRoad, smoothGround, state.x, state.z))
+        return { res: "edge", contact };
+      return { res: "free", contact };
+    };
+    const acceptMove = (contact) => {
+      nearRoad = contact;
+      activeRoad = contact;
+      smoothGround = contact?.y ?? 0;
+    };
+    const stopToast = (kind) => {
+      if (now - lastHud > 2000) {
+        lastHud = now;
+        toast(
+          kind === "outside"
+            ? "Edge of the available map"
+            : kind === "water"
+              ? "Stay on land — reverse to return"
+              : kind === "building"
+                ? "Building ahead — reverse to return"
+                : "Loading road ahead…",
+        );
+      }
+    };
+    for (let i = 0; i < steps; i++) {
+      const oldX = state.x,
+        oldZ = state.z;
+      stepCar(state, input, dt / steps);
+      const nx = state.x,
+        nz = state.z;
+      const full = probeMove(nx, nz);
+      if (full.res === "free") {
+        acceptMove(full.contact);
+        scraping = false;
+      } else if (full.res === "blocked") {
+        // Rolling collision: slide along the wall on the dominant axis
+        // before giving up, so guard rails and building faces glance the
+        // car instead of dead-stopping it. Scrape damping applies once per
+        // contact, so grinding keeps rolling instead of stalling.
+        const xFirst = Math.abs(nx - oldX) >= Math.abs(nz - oldZ);
+        let slide = xFirst ? probeMove(nx, oldZ) : probeMove(oldX, nz);
+        if (slide.res !== "free")
+          slide = xFirst ? probeMove(oldX, nz) : probeMove(nx, oldZ);
+        if (slide.res === "free") {
+          acceptMove(slide.contact);
+          if (!scraping) {
+            scraping = true;
+            state.speed *= 0.55;
           }
+        } else {
+          state.x = oldX;
+          state.z = oldZ;
+          state.speed *= 0.2;
+          scraping = false;
+          stopToast(full.kind);
         }
       } else {
-        nearRoad = contact;
-        activeRoad = contact;
-        smoothGround = contact?.y ?? 0;
+        // Unsupported elevated edge: past a deck end or into a chunk that
+        // has not loaded yet. Hold the last supported position and height
+        // instead of snapping to ground level.
+        state.x = oldX;
+        state.z = oldZ;
+        state.speed *= 0.2;
+        scraping = false;
+        if (!chunkLoadedAt(state.x, state.z)) stopToast("edge");
       }
       distance += Math.hypot(state.x - oldX, state.z - oldZ) / 1000;
       traffic?.step(dt / steps, state, smoothGround);
@@ -1308,15 +1490,12 @@ function animate() {
   sunTarget.position.set(state.x, 0, state.z);
   const sun = scene.getObjectByName("sun");
   sun.position.set(state.x - 180, 250, state.z + 70);
-  // Small per-pass budget above: poll often so driving toward new chunks
-  // keeps up without one long freeze.
-  if (now - lastStream > 500) {
-    lastStream = now;
-    streamChunks().catch(console.error);
-  }
   if (frame % 30 === 0) updateNightLights();
   if (frame % 5 === 0) hud();
   renderer.render(scene, camera);
+  // Stream after rendering: fetches stay ahead of travel and at most a few
+  // milliseconds of chunk building run within this frame's budget.
+  pumpStream(now);
 }
 async function init() {
   bindControls();
@@ -1484,11 +1663,26 @@ async function init() {
         shader.fragmentShader;
       shader.fragmentShader = shader.fragmentShader.replace(
         "#include <color_fragment>",
-        "#include <color_fragment>\nif(abs(vFacadeNormal.y)<0.5 && vFacadePosition.y>3.5){float u=fract((vFacadePosition.x+vFacadePosition.z)*0.22);float v=fract(vFacadePosition.y*0.28);float windowMask=step(0.18,u)*(1.0-step(0.81,u))*step(0.22,v)*(1.0-step(0.80,v));float lit=step(0.5,fract(sin(dot(floor(vec2((vFacadePosition.x+vFacadePosition.z)*0.22,vFacadePosition.y*0.28)),vec2(12.9898,78.233)))*43758.5453));windowMask*=lit;diffuseColor.rgb=mix(diffuseColor.rgb,diffuseColor.rgb*vec3(0.59,0.76,0.80),windowMask*0.60);}",
+        `#include <color_fragment>
+        // Procedural windows alias into crawling moire once several cells
+        // project onto one pixel, so fade the detail out with distance.
+        // cameraPosition is a built-in fragment uniform in three.js.
+        if(abs(vFacadeNormal.y)<0.5 && vFacadePosition.y>3.5){
+          float facadeFade = 1.0 - smoothstep(120.0, 350.0, distance(vFacadePosition, cameraPosition));
+          if(facadeFade > 0.001){
+            float u=fract((vFacadePosition.x+vFacadePosition.z)*0.22);float v=fract(vFacadePosition.y*0.28);float windowMask=step(0.18,u)*(1.0-step(0.81,u))*step(0.22,v)*(1.0-step(0.80,v));float lit=step(0.5,fract(sin(dot(floor(vec2((vFacadePosition.x+vFacadePosition.z)*0.22,vFacadePosition.y*0.28)),vec2(12.9898,78.233)))*43758.5453));windowMask*=lit*facadeFade;diffuseColor.rgb=mix(diffuseColor.rgb,diffuseColor.rgb*vec3(0.59,0.76,0.80),windowMask*0.60);
+          }
+        }`,
       );
       shader.fragmentShader = shader.fragmentShader.replace(
         "#include <emissivemap_fragment>",
-        "#include <emissivemap_fragment>\nif(abs(vFacadeNormal.y)<0.5 && vFacadePosition.y>3.5){float u=fract((vFacadePosition.x+vFacadePosition.z)*0.22);float v=fract(vFacadePosition.y*0.28);float windowMask=step(0.18,u)*(1.0-step(0.81,u))*step(0.22,v)*(1.0-step(0.80,v));float lit=step(0.5,fract(sin(dot(floor(vec2((vFacadePosition.x+vFacadePosition.z)*0.22,vFacadePosition.y*0.28)),vec2(12.9898,78.233)))*43758.5453));windowMask*=lit;totalEmissiveRadiance+=windowMask*uNight*vec3(1.0,0.52,0.16)*1.65;}",
+        `#include <emissivemap_fragment>
+        if(abs(vFacadeNormal.y)<0.5 && vFacadePosition.y>3.5){
+          float facadeFade = 1.0 - smoothstep(120.0, 350.0, distance(vFacadePosition, cameraPosition));
+          if(facadeFade > 0.001){
+            float u=fract((vFacadePosition.x+vFacadePosition.z)*0.22);float v=fract(vFacadePosition.y*0.28);float windowMask=step(0.18,u)*(1.0-step(0.81,u))*step(0.22,v)*(1.0-step(0.80,v));float lit=step(0.5,fract(sin(dot(floor(vec2((vFacadePosition.x+vFacadePosition.z)*0.22,vFacadePosition.y*0.28)),vec2(12.9898,78.233)))*43758.5453));windowMask*=lit*facadeFade;totalEmissiveRadiance+=windowMask*uNight*vec3(1.0,0.52,0.16)*1.65;
+          }
+        }`,
       );
     };
     manifest = await json("./data/manifest.json");
@@ -1524,8 +1718,18 @@ async function init() {
     const spawn = point(manifest.spawn);
     state.x = spawn[0];
     state.z = spawn[1];
+    // Projected chunk bboxes + id lookup: per-frame streaming math without
+    // repeated map scans or projection calls.
+    for (const c of manifest.chunks) {
+      chunkById.set(c.id, c);
+      const a = point([c.bbox[0], c.bbox[1]]), b = point([c.bbox[2], c.bbox[3]]);
+      c._x0 = Math.min(a[0], b[0]);
+      c._x1 = Math.max(a[0], b[0]);
+      c._z0 = Math.min(a[1], b[1]);
+      c._z1 = Math.max(a[1], b[1]);
+    }
     $("loading-message").textContent = "Loading the neighbourhood…";
-    await streamChunks(true);
+    await ensureChunksLoaded();
     car = createCar();
     traffic = createTraffic(scene);
     traffic.syncRoads(roads);
