@@ -298,6 +298,22 @@ function createChunk(data, bbox) {
         (props.connections?.end?.length > 1 && endDistance - d < 14);
       // Lane-merge tapers: per-end widths interpolated from prepared zones.
       const tapers = props.tapers || [];
+      // Yellow box-junction hatching is only meaningful for short genuine
+      // crossings. The prepared junction flag also marks long parallel
+      // overlaps (dual carriageways: ~33% of pairs), which would otherwise
+      // paint endless yellow criss-cross. Hatch only short runs.
+      const pairLayouts = pts.map((_, k) => props.layout?.[k] || {});
+      const hatchable = new Array(Math.max(0, pts.length - 1)).fill(false);
+      for (let k = 0; k < pts.length - 1;) {
+        if (!pairLayouts[k].junction) { k++; continue; }
+        let j = k, run = 0;
+        while (j < pts.length - 1 && pairLayouts[j].junction) {
+          run += Math.hypot(pts[j + 1][0] - pts[j][0], pts[j + 1][1] - pts[j][1]);
+          j++;
+        }
+        if (run <= 45) for (let m = k; m < j; m++) hatchable[m] = true;
+        k = j;
+      }
       for (let i = 0; i < pts.length - 1; i++) {
         const a = pts[i], b = pts[i + 1], len = Math.hypot(b[0] - a[0], b[1] - a[1]);
         if (len < 0.01) continue;
@@ -330,6 +346,47 @@ function createChunk(data, bbox) {
         (underground ? tunnelRoadGeo : roadGeo).push(
           ribbon(a, b, [wa, wb], 0.065, underground ? "#252d31" : "#48575b"),
         );
+        // Slightly raised edge lips give the deck a readable depth against
+        // the pavement. Gaps where another road overlaps the edge keep
+        // merges and junction mouths clear. Skipped in tunnels.
+        const sideOpen = (side) =>
+          layout[side === -1 ? "right" : "left"];
+        if (!segment.tunnel) for (const side of [-1, 1]) {
+          if (sideOpen(side)) continue;
+          bridgeGeo.push(deck(a, b, 0.3, -0.08, 0.12,
+            [side * (wa / 2 + 0.05), side * (wb / 2 + 0.05)]));
+        }
+        // Collision guard rails on expressways (motorway/trunk incl. links)
+        // so the car cannot slide off the deck. Same gaps as the visual
+        // rails plus multi-connection ends, so on/off-ramps still merge.
+        // Elevated pairs already render parapets above; they only need the
+        // collision wall, while ground-level pairs get a visible rail too.
+        const isHighway = /^(motorway|trunk)/.test(props.highway || "");
+        if (isHighway && !segment.tunnel) for (const side of [-1, 1]) {
+          if (sideOpen(side) || atJunction(a[3]) || atJunction(b[3])) continue;
+          const wA = wa / 2 + 0.02, wB = wb / 2 + 0.02, thick = 0.28;
+          if (!elevated)
+            bridgeGeo.push(deck(a, b, 0.25, -0.5, 0.75,
+              [side * (wA + 0.125), side * (wB + 0.125)]));
+          const wall = [
+            [a[0] + a[4] * side * wA, a[1] + a[5] * side * wA],
+            [b[0] + b[4] * side * wB, b[1] + b[5] * side * wB],
+            [b[0] + b[4] * side * (wB + thick), b[1] + b[5] * side * (wB + thick)],
+            [a[0] + a[4] * side * (wA + thick), a[1] + a[5] * side * (wA + thick)],
+          ];
+          blocks.push({
+            rings: [wall],
+            guard: true,
+            base: Math.min(a[2], b[2]),
+            height: Math.max(a[2], b[2]) + 0.85,
+            bbox: [
+              Math.min(...wall.map((p) => p[0])),
+              Math.min(...wall.map((p) => p[1])),
+              Math.max(...wall.map((p) => p[0])),
+              Math.max(...wall.map((p) => p[1])),
+            ],
+          });
+        }
         if (!layout.junction) addTunnelPortal(a, b, [wa, wb], portalGeo, portalInsetGeo);
         const interpolate = (t) => a.map((v, j) => v + (b[j] - v) * t);
         const lanes = props.laneLayout;
@@ -360,9 +417,9 @@ function createChunk(data, bbox) {
         }
         if (!atJunction(a[3]) && !atJunction(b[3])) for (const side of [-1, 1]) {
           if (layout[side === -1 ? "right" : "left"]) continue;
-          markGeo.push(ribbon(a, b, 0.12, 0.09, "#d3c990", [side * (wa / 2 - 0.3), side * (wb / 2 - 0.3)]));
+          markGeo.push(ribbon(a, b, 0.12, 0.09, "#e7e8d6", [side * (wa / 2 - 0.3), side * (wb / 2 - 0.3)]));
         }
-        if (layout.junction && !segment.tunnel) for (const bar of hatchBars(a[3], b[3])) {
+        if (hatchable[i] && !segment.tunnel) for (const bar of hatchBars(a[3], b[3])) {
           const s = bar.flip ? 1 : -1;
           const wLo = widthAt(tapers, bar.lo, width) / 2 - 0.35;
           const wHi = widthAt(tapers, bar.hi, width) / 2 - 0.35;
@@ -599,7 +656,25 @@ function updateRouteLine() {
   const path = $("map-route");
   if (path) path.setAttribute("d", route?.steps.map(({ road }) => `M${road.a[0]},${road.a[1]}L${road.b[0]},${road.b[1]}`).join("") || "");
 }
+// Chunk streaming runs one pass at a time; overlapping animate() triggers
+// join (background) or wait-then-reload (forced teleport/initial load).
+let streamActive = null;
 async function streamChunks(force = false) {
+  if (streamActive) {
+    if (!force) return streamActive;
+    try { await streamActive; } catch { /* reload below */ }
+  }
+  streamActive = loadChunks(force);
+  try {
+    await streamActive;
+  } finally {
+    streamActive = null;
+  }
+}
+// Yield one frame so the render loop can paint between heavy synchronous
+// chunk builds. Timer-based: requestAnimationFrame would stall a hidden tab.
+const yieldToEventLoop = () => new Promise((resolve) => setTimeout(resolve, 0));
+async function loadChunks(force = false) {
   let changed = false;
   const loadRadius = innerWidth < 768 ? 900 : 1400,
     unloadRadius = loadRadius + 400,
@@ -627,8 +702,19 @@ async function streamChunks(force = false) {
       changed = true;
     }
   }
-  const requests = wanted.map(async (c) => {
-    if (chunkState.has(c.id)) return;
+  // Nearest chunks first so the road under the car appears before distant
+  // scenery. Background passes build a small budget per tick and yield
+  // between chunks; a burst of N new chunks used to block the main thread
+  // for N x createChunk() inside one Promise.all. Forced loads (startup,
+  // spawn teleport) still fetch everything, but one chunk at a time with
+  // yields so the loading indicator can paint.
+  const missing = wanted
+    .filter((c) => !chunkState.has(c.id))
+    .map((c) => ({ chunk: c, distance: distanceTo(c) }))
+    .sort((a, b) => a.distance - b.distance)
+    .map(({ chunk }) => chunk);
+  const budget = force ? missing.length : 2;
+  for (const c of missing.slice(0, budget)) {
     chunkState.set(c.id, { loading: true });
     try {
       const data = await json("./data/" + c.file);
@@ -642,8 +728,9 @@ async function streamChunks(force = false) {
       toast("A map section could not load. Retrying…");
       console.error(e);
     }
-  });
-  await Promise.all(requests);
+    // Let one frame render before the next synchronous build.
+    await yieldToEventLoop();
+  }
   if (changed) rebuildCollisionLists();
 }
 function box(w, h, d, material, x = 0, y = 0, z = 0) {
@@ -845,11 +932,12 @@ function blocked(x, z, y, road = null) {
   // the remaining footprint still blocks the car. Obstacles from legacy
   // assets without derived geometry keep the previous road-wins behavior so
   // bad footprints cannot make a route impassable; off-road collisions,
-  // boundary and water protection remain unchanged.
+  // boundary and water protection remain unchanged. Guard rails are the
+  // exception: they line the road edge itself, so they always collide.
   const onRoad = road && road.d <= road.width / 2 + 0.6;
   const boxRadius = 2.3;
   for (const b of obstacles) {
-    if (onRoad && !b.clearancePrepared) continue;
+    if (onRoad && !b.clearancePrepared && !b.guard) continue;
     if (b.base > y + 1.7 || b.height < y) continue;    if (
       x < b.bbox[0] - boxRadius ||
       x > b.bbox[2] + boxRadius ||
@@ -1220,7 +1308,9 @@ function animate() {
   sunTarget.position.set(state.x, 0, state.z);
   const sun = scene.getObjectByName("sun");
   sun.position.set(state.x - 180, 250, state.z + 70);
-  if (now - lastStream > 1500) {
+  // Small per-pass budget above: poll often so driving toward new chunks
+  // keeps up without one long freeze.
+  if (now - lastStream > 500) {
     lastStream = now;
     streamChunks().catch(console.error);
   }
