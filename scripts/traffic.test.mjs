@@ -6,7 +6,7 @@ const b = road('b', [10, 0, 0], [20, 0, 0]);
 const overhead = road('overhead', [10, 0, 4], [20, 0, 4]);
 const vehicle = {...VEHICLES.car, road: a, direction: 1, t: 0.95, speed: 10};
 placeVehicle(vehicle);
-assert(vehicle.z > 0, 'Forward traffic keeps left');
+assert(vehicle.z < 0, 'Forward traffic keeps left');
 assert.equal(nextRoad(vehicle, trafficGraph([a, b, overhead]), () => 0).road.id, 'b');
 advanceVehicle(vehicle, 0.1, trafficGraph([a, b]), () => 0);
 assert.equal(vehicle.road.id, 'b');

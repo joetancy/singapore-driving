@@ -374,22 +374,22 @@ const { placeVehicle } = await import('../app/js/traffic-sim.js');
 const twoWay = { a: [0, 0, 0], b: [100, 0, 0], width: 10, x: 50, z: 0,
   laneLayout: { forward: 1, backward: 1, total: 2 } };
 const pose = spawnPose(twoWay, Math.PI / 2);
-assert.deepEqual([pose.x, pose.z], [50, 2.5]);
+assert.deepEqual([pose.x, pose.z], [50, -2.5]);
 assert(Math.abs(pose.yaw - Math.PI / 2) < 1e-9);
 const npc = { road: twoWay, direction: 1, t: 0.5, speed: 0 };
 placeVehicle(npc);
 assert.deepEqual([pose.x, pose.z, pose.yaw], [npc.x, npc.z, npc.yaw]);
 const reverse = { ...twoWay, laneLayout: { forward: 0, backward: 2, total: 2, oneWay: true, reverse: true } };
 const reversePose = spawnPose(reverse, Math.PI / 2);
-assert.deepEqual([reversePose.x, reversePose.z], [50, -2.5]);
+assert.deepEqual([reversePose.x, reversePose.z], [50, 2.5]);
 assert(Math.abs(reversePose.yaw + Math.PI / 2) < 1e-9, "Reverse one-way spawn faces backward");
 const corrected = spawnPose({ ...twoWay, laneLayout: { forward: 2, backward: 0, total: 2, oneWay: true, reverse: false } }, -Math.PI / 2);
 assert(Math.abs(corrected.yaw - Math.PI / 2) < 1e-9, "One-way spawn corrects wrong-way headings");
-assert.deepEqual([corrected.x, corrected.z], [50, 2.5]);
+assert.deepEqual([corrected.x, corrected.z], [50, -2.5]);
 const shared = spawnPose({ ...twoWay, laneLayout: { forward: 1, backward: 0, total: 1 } }, Math.PI / 2);
 assert.deepEqual([shared.x, shared.z], [50, 0], "Shared single lane spawns centered");
 const unmarked = spawnPose({ a: [0, 0, 0], b: [100, 0, 0], width: 10, x: 50, z: 0 }, Math.PI / 2);
-assert.deepEqual([unmarked.x, unmarked.z], [50, 2.4]);
+assert.deepEqual([unmarked.x, unmarked.z], [50, -2.4]);
 console.log("legal spawn offset checks passed");
 
 // Lane-merge tapers ease the wider side down to a narrower degree-1

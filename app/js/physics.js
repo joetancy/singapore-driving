@@ -63,9 +63,11 @@ export function spawnPose(road, yaw) {
   const lateral = lanes?.total
     ? (road.width / 2 - road.width / (2 * lanes.total)) * dir
     : road.width * 0.24 * dir;
+  // East-positive x and south-positive z: left of the source tangent is
+  // (tz, -tx), not the stored cross-section normal (which points right).
   return {
-    x: road.x - (dz / l) * lateral,
-    z: road.z + (dx / l) * lateral,
+    x: road.x + (dz / l) * lateral,
+    z: road.z - (dx / l) * lateral,
     yaw: Math.atan2(dx * dir, -dz * dir),
   };
 }

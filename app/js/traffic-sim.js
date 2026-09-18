@@ -73,8 +73,8 @@ export function placeVehicle(v) {
   const dx = (r.b[0] - r.a[0]) / len, dz = (r.b[1] - r.a[1]) / len;
   const lanes = r.laneLayout?.total || 2;
   const offset = v.direction * (r.width / 2 - r.width / lanes / 2);
-  v.x = r.a[0] + (r.b[0] - r.a[0]) * t - dz * offset;
-  v.z = r.a[1] + (r.b[1] - r.a[1]) * t + dx * offset;
+  v.x = r.a[0] + (r.b[0] - r.a[0]) * t + dz * offset;
+  v.z = r.a[1] + (r.b[1] - r.a[1]) * t - dx * offset;
   v.y = r.a[2] + (r.b[2] - r.a[2]) * t;
   v.yaw = Math.atan2(dx * v.direction, -dz * v.direction);
 }

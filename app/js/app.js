@@ -1348,7 +1348,7 @@ function hud() {
   const roadDx = nearRoad?.b[0] - nearRoad?.a[0], roadDz = nearRoad?.b[1] - nearRoad?.a[1];
   const roadLength = nearRoad && Math.hypot(roadDx, roadDz);
   const travel = nearRoad && Math.sign(state.speed) * (Math.sin(state.yaw) * roadDx - Math.cos(state.yaw) * roadDz);
-  const lateral = nearRoad && ((state.x - nearRoad.x) * -roadDz + (state.z - nearRoad.z) * roadDx) / roadLength;
+  const lateral = nearRoad && ((state.x - nearRoad.x) * roadDz - (state.z - nearRoad.z) * roadDx) / roadLength;
   const road = nearRoad;
   const layout = road?.laneLayout;
   const inJunction = road?.layout?.junction || road?.layout?.crossing;
