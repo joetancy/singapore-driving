@@ -1356,11 +1356,6 @@ const road = nearRoad;
   const loading = waitingForChunk || !ready;
   const unsupportedDir = !layout || (layout.oneWay && layout.reverse && layout.forward === 0);
 
-  // Detect wrong-way: actual motion along lane direction.
-  const roadDx = road?.b[0] - road?.a[0], roadDz = road?.b[1] - road?.a[1];
-  const roadLength = road && Math.hypot(roadDx, roadDz);
-  const travel = road && (Math.sin(state.yaw) * roadDx - Math.cos(state.yaw) * roadDz);
-  const lateral = road && ((state.x - road.x) * -roadDz + (state.z - road.z) * roadDx) / roadLength;
   let wrongWayNow = false;
   if (layout && kmh > 5 && Math.abs(lateral) > 0.5 && !inJunction && !sharedLane && !stopped && !loading && !offRoad && !unsupportedDir) {
     // Two-way: check if moving against the lane direction for our lateral position.
