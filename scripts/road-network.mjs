@@ -63,9 +63,9 @@ export function laneLayout(properties = {}) {
   let source = "tagged";
   const warnings = [];
 
-  if (fwdParsed.confidence !== "exact" && fwdParsed.source) warnings.push(`INVALID_LANE_COUNT: lanes:forward=${fwdParsed.source}`);
-  if (bwdParsed.confidence !== "exact" && bwdParsed.source) warnings.push(`INVALID_LANE_COUNT: lanes:backward=${bwdParsed.source}`);
-  if (totalParsed.confidence !== "exact" && totalParsed.source) warnings.push(`INVALID_LANE_COUNT: lanes=${totalParsed.source}`);
+  if (fwdParsed.confidence !== "exact" && fwdParsed.source) warnings.push(diagnostic("INVALID_LANE_COUNT", `Invalid lanes:forward value: ${fwdParsed.source}`, null, { "lanes:forward": fwdParsed.source }));
+  if (bwdParsed.confidence !== "exact" && bwdParsed.source) warnings.push(diagnostic("INVALID_LANE_COUNT", `Invalid lanes:backward value: ${bwdParsed.source}`, null, { "lanes:backward": bwdParsed.source }));
+  if (totalParsed.confidence !== "exact" && totalParsed.source) warnings.push(diagnostic("INVALID_LANE_COUNT", `Invalid lanes value: ${totalParsed.source}`, null, { lanes: totalParsed.source }));
 
   const widthDerived = () => Math.max(1, Math.round(roadWidth(properties) / 3.2));
 
@@ -81,7 +81,7 @@ export function laneLayout(properties = {}) {
       // Derive from width with LANE_WIDTH target.
       lanesInDirection = widthDerived();
       source = "estimated";
-      warnings.push(`ESTIMATED_LANES: one-way derived from width`);
+      warnings.push(diagnostic("ESTIMATED_LANES", "One-way lane count derived from final width"));
     }
     forward = reverse ? 0 : lanesInDirection;
     backward = reverse ? lanesInDirection : 0;
@@ -108,7 +108,7 @@ export function laneLayout(properties = {}) {
       if (forward == null && backward == null) {
         forward = 1; backward = 1;
         source = "fallback";
-        if (!lanesInvalid) warnings.push(`ESTIMATED_LANES: untagged two-way defaults to 1+1`);
+        if (!lanesInvalid) warnings.push(diagnostic("ESTIMATED_LANES", "Untagged two-way road defaults to one lane per direction"));
       } else if (forward == null) {
         forward = 1;
         if (bwdParsed.confidence === "exact") source = "tagged";
@@ -121,7 +121,7 @@ export function laneLayout(properties = {}) {
     }
     // Validate against total if given.
     if (total != null && forward + backward !== total) {
-      warnings.push(`INCONSISTENT_LANES: forward+backward (${forward+backward}) != total (${total})`);
+      warnings.push(diagnostic("INCONSISTENT_LANES", `Directional lanes (${forward + backward}) do not match total (${total})`, null, { forward, backward, total }, "Use deterministic 1+1 fallback."));
       // Inconsistent counts: fall back to class default regardless of parse confidence.
       forward = 1; backward = 1;
       source = "fallback";
@@ -149,6 +149,10 @@ const key = (p) => p.slice(0, 2).map((v) => v.toFixed(7)).join(",");
 const length = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 const mix = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
 const maxGrade = 0.08; // 8% maximum grade (0.08 rise/run).
+const diagnostic = (code, explanation, featureId = null, rawValues = {}, fallbackOrBlockedBehavior = "Retain source data and use the documented fallback.") => ({
+  code, severity: "warning", featureId, sourceId: featureId == null ? null : String(featureId),
+  chunkIds: [], location: null, rawValues, explanation, fallbackOrBlockedBehavior,
+});
 
 export function prepareRoads(features, center) {
   const nodes = new Map(), edges = [], paths = new Map();
@@ -184,7 +188,8 @@ export function prepareRoads(features, center) {
   const warnings = [];
   for (const n of nodes.values()) {
     const heights = n.edges.map((e) => e.h);
-    if (n.edges.length > 2 && new Set(heights).size > 1) warnings.push(n.id);
+    if (n.edges.length > 2 && new Set(heights).size > 1)
+      warnings.push(diagnostic("CONFLICTING_LEVEL_TAGS", "Junction has incompatible prepared levels", null, { nodeId: n.id }));
   }
   // Validate bridge/tunnel/covered/layer tag combinations per feature.
   for (const f of features) {
@@ -194,10 +199,10 @@ export function prepareRoads(features, center) {
     const isBridge = p.bridge && p.bridge !== "no";
     const isCovered = p.covered && p.covered !== "no";
     const layer = Number(p.layer) || 0;
-    if (isTunnel && isBridge) warnings.push(`CONFLICTING_LEVEL_TAGS: ${f.id} has both tunnel and bridge`);
-    if (isTunnel && isCovered) warnings.push(`CONFLICTING_LEVEL_TAGS: ${f.id} has both tunnel and covered`);
-    if (isBridge && layer < 0) warnings.push(`CONFLICTING_LEVEL_TAGS: ${f.id} bridge with negative layer`);
-    if (isTunnel && layer > 0) warnings.push(`CONFLICTING_LEVEL_TAGS: ${f.id} tunnel with positive layer`);
+    if (isTunnel && isBridge) warnings.push(diagnostic("CONFLICTING_LEVEL_TAGS", "Feature has both tunnel and bridge tags", f.id, p));
+    if (isTunnel && isCovered) warnings.push(diagnostic("CONFLICTING_LEVEL_TAGS", "Feature has both tunnel and covered tags", f.id, p));
+    if (isBridge && layer < 0) warnings.push(diagnostic("CONFLICTING_LEVEL_TAGS", "Bridge has a negative layer", f.id, { layer }));
+    if (isTunnel && layer > 0) warnings.push(diagnostic("CONFLICTING_LEVEL_TAGS", "Tunnel has a positive layer", f.id, { layer }));
   }
   const heightAt = (e, n) => e.a === n ? e.ah : e.bh;
   const setHeight = (e, n, h) => { if (e.a === n) e.ah = h; else e.bh = h; };
@@ -241,7 +246,7 @@ export function prepareRoads(features, center) {
       const deltaH = Math.abs(nearHeight - next.h);
       const minRun = deltaH / maxGrade;
       if (next.length < minRun - 1e-6) {
-        warnings.push(`APPROACH_TOO_SHORT: ${next.f.id} grade ${(deltaH/next.length*100).toFixed(1)}% exceeds 8% over ${next.length.toFixed(1)}m (need ${minRun.toFixed(1)}m)`);
+        warnings.push(diagnostic("APPROACH_TOO_SHORT", `Grade ${(deltaH / next.length * 100).toFixed(1)}% exceeds 8%; need ${minRun.toFixed(1)}m`, next.f.id, { deltaH, length: next.length }, "Leave the transition unresolved; do not force an over-grade approach."));
         continue; // Do not force an over-grade approach.
       }
       if (direction * (nearHeight - heightAt(next, n)) > 0.00001)
@@ -266,9 +271,7 @@ export function prepareRoads(features, center) {
       // are dead ends (no automatic transfer). Ambiguous legacy endpoints
       // (multiple candidates at same coordinate) are warned, not connected.
       if (!node.original && hasNodeIds) {
-        connections.get(e.f.id).warnings.push(
-          `${end} endpoint at synthetic node ${node.id}; no connection`,
-        );
+        connections.get(e.f.id).warnings.push(diagnostic("LEGACY_NODE_ID_MISSING", `${end} endpoint has no original node identity`, e.f.id, { nodeId: node.id }, "Leave the endpoint unresolved."));
         connections.get(e.f.id)[end] = [];
         continue;
       }
@@ -305,9 +308,7 @@ export function prepareRoads(features, center) {
         if (aligned.length >= 1) {
           connections.get(e.f.id)[end] = aligned.map((a) => a.f.id);
         } else {
-          connections.get(e.f.id).warnings.push(
-            `${end} endpoint ambiguous at ${node.id}: ${uniqueCandidates.map((c) => c.f.id).join(",")}`,
-          );
+          connections.get(e.f.id).warnings.push(diagnostic("AMBIGUOUS_CONNECTION", `${end} endpoint has multiple plausible candidates`, e.f.id, { nodeId: node.id, candidates: uniqueCandidates.map((c) => c.f.id) }, "Leave the endpoint unresolved."));
           connections.get(e.f.id)[end] = [];
         }
       }

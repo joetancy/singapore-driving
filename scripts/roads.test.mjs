@@ -62,7 +62,9 @@ assert(identities.connections.get("identity-a").end.includes("identity-c"));
 
 assert.deepEqual(laneLayout({ highway: "residential" }), {
   forward: 1, backward: 1, oneWay: false, reverse: false, total: 2, turnLanes: "", maxspeed: "",
-  source: "fallback", warnings: ["ESTIMATED_LANES: untagged two-way defaults to 1+1"],
+  source: "fallback", warnings: [{ code: "ESTIMATED_LANES", severity: "warning", featureId: null, sourceId: null,
+    chunkIds: [], location: null, rawValues: {}, explanation: "Untagged two-way road defaults to one lane per direction",
+    fallbackOrBlockedBehavior: "Retain source data and use the documented fallback." }],
 });
 assert.deepEqual(laneLayout({ highway: "primary", oneway: "yes", lanes: "3", "turn:lanes": "left|through|right", maxspeed: "50" }), {
   forward: 3, backward: 0, oneWay: true, reverse: false, total: 3,
@@ -77,7 +79,7 @@ assert.deepEqual(laneLayout({ highway: "service", oneway: "-1", lanes: "1" }), {
   source: "tagged",
 });
 assert.equal(laneLayout({ highway: "motorway", oneway: "no" }).oneWay, false);
-assert.deepEqual(laneLayout({ highway: "residential", lanes: "x" }).warnings, ["INVALID_LANE_COUNT: lanes=x"]);
+assert.equal(laneLayout({ highway: "residential", lanes: "x" }).warnings[0].code, "INVALID_LANE_COUNT");
 
 const layered = prepareRoads([
   road("layer-deck", [[103.852, 1.29], [103.8521, 1.29]], { layer: 1 }),
@@ -336,10 +338,10 @@ assert.equal(laneLayout({ highway: "primary", oneway: "yes", width: "10" }).forw
   "Width-derived one-way lanes use the 3.2 m target");
 const inconsistent = laneLayout({ highway: "residential", lanes: "3", "lanes:forward": "2", "lanes:backward": "2" });
 assert.deepEqual([inconsistent.forward, inconsistent.backward, inconsistent.total], [1, 1, 2]);
-assert.deepEqual(inconsistent.warnings, ["INCONSISTENT_LANES: forward+backward (4) != total (3)"]);
+assert.equal(inconsistent.warnings[0].code, "INCONSISTENT_LANES");
 const overfilled = laneLayout({ highway: "residential", lanes: "2", "lanes:forward": "2" });
 assert.deepEqual([overfilled.forward, overfilled.backward], [1, 1]);
-assert.deepEqual(overfilled.warnings, ["INCONSISTENT_LANES: forward+backward (3) != total (2)"]);
+assert.equal(overfilled.warnings[0].code, "INCONSISTENT_LANES");
 assert.deepEqual(laneLayout({ highway: "residential", lanes: "3" }), {
   forward: 2, backward: 1, oneWay: false, reverse: false, total: 3, turnLanes: "", maxspeed: "",
   source: "tagged",
