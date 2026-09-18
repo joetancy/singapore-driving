@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { PREPARED_ROAD_SCHEMA_VERSION, prepareAssets, surfacePolygon, taperZones } from "./prepare.mjs";
 import { prepareRoads, roadVisible, laneLayout, nominalHeight, project } from "./road-network.mjs";
 import { roadIndex, indexAddRoads, indexRemoveRoads, nearbyRoadway, surfaceAt, retainElevated, pastSegmentEnd, pickNightLights, widthAt, stopLines, hatchBars, findRoute, turnManeuver } from "../app/js/roads.js";
@@ -382,6 +383,9 @@ console.log("traffic signal head checks passed");
 // Spawn poses use the outermost legal lane matching the heading, corrected
 // on one-way roads, exactly where forward traffic drives.
 const { placeVehicle } = await import('../app/js/traffic-sim.js');
+const appSourceForLaneCheck = readFileSync(new URL('../app/js/app.js', import.meta.url), 'utf8');
+assert.match(appSourceForLaneCheck, /const lateral = -\(divs\[fStart \+ n\] \+ divs\[fStart \+ n \+ 1\]\) \/ 2/,
+  'Forward markings use the left-hand lane side');
 const twoWay = { a: [0, 0, 0], b: [100, 0, 0], width: 10, x: 50, z: 0,
   laneLayout: { forward: 1, backward: 1, total: 2 } };
 const pose = spawnPose(twoWay, Math.PI / 2);

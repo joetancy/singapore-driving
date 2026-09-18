@@ -510,11 +510,11 @@ function createChunk(data, bbox) {
           // Include both road edges when taking lane-boundary midpoints.
           const fStart = lanes.backward;
           for (let n = 0; n < lanes.forward; n++) {
-            const lateral = (divs[fStart + n] + divs[fStart + n + 1]) / 2;
+            const lateral = -(divs[fStart + n] + divs[fStart + n + 1]) / 2;
             arrow(lateral, 1);
           }
           for (let n = 0; n < lanes.backward; n++) {
-            const lateral = (divs[n] + divs[n + 1]) / 2;
+            const lateral = -(divs[n] + divs[n + 1]) / 2;
             arrow(lateral, -1);
           }
         }
