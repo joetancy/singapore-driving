@@ -113,6 +113,7 @@ def convert(source,boundary_path,output,allow_approximate=False):
     ends=f['geometry']['coordinates'];props=dict(f['properties'])
     props['startNodeId']=str(refs[0]) if refs and abs(ends[0][0]-c[0][0])<1e-9 and abs(ends[0][1]-c[0][1])<1e-9 else None
     props['endNodeId']=str(refs[-1]) if refs and abs(ends[-1][0]-c[-1][0])<1e-9 and abs(ends[-1][1]-c[-1][1])<1e-9 else None
+    props['nodeIds']=[str(n) for n in refs] if len(ends)==len(c) else [props['startNodeId'], props['endNodeId']]
     f['properties']=props
   elif w['id'] not in consumed and category(t) and len(c)>3 and c[0]==c[-1]:
    kind=category(t);props=dict(t)
@@ -260,7 +261,7 @@ def convert(source,boundary_path,output,allow_approximate=False):
    for j in range(n):
     coords2=[[round(a[k]+(b[k]-a[k])*v/n,7) for k in range(2)] for v in (j,j+1)]
     ids=[node_at.get(tuple(coords2[0]),f"{r['id']}:{i}:{j}"),node_at.get(tuple(coords2[1]),f"{r['id']}:{i}:{j+1}")]
-    props=dict(r['properties'],startNodeId=ids[0],endNodeId=ids[1])
+    props=dict(r['properties'],startNodeId=ids[0],endNodeId=ids[1],nodeIds=ids)
     segments.append(dict(type='Feature',id=f"{r['id']}-{i}-{j}",properties=props,geometry=dict(type='LineString',coordinates=coords2)))
  for f in features+signals+crossings+bus_stops+segments:
   g=shape(f['geometry']);p=g.centroid;x=(p.x-center[0])*111320*cos;z=(center[1]-p.y)*111320

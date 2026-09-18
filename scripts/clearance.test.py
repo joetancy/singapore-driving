@@ -94,6 +94,9 @@ def main():
         assert stops[0]["properties"]["name"] == "Test Stop"
         manifest = json.loads((output / "manifest.json").read_text())
         assert manifest["counts"]["busStops"] == 1
+        road_features = [f for p in output.glob("*.geojson") for f in json.loads(p.read_text())["features"]
+                         if f["geometry"]["type"] == "LineString" and f["properties"].get("highway")]
+        assert road_features and all(len(f["properties"].get("nodeIds", [])) == 2 for f in road_features), "Road segments preserve ordered endpoint node identity"
         # Ground road opens the footprint but splits it into disconnected parts.
         ground = buildings["way/200-0"]
         cleared = shape(ground["properties"]["clearanceGeometry"])
