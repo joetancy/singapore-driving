@@ -7,6 +7,7 @@ from pathlib import Path
 from shapely.geometry import Polygon, MultiPolygon, shape, mapping
 from shapely.ops import transform, unary_union
 from shapely.strtree import STRtree
+from shapely.prepared import prep
 from shapely.validation import make_valid
 
 VEHICLE_HEIGHT = 1.7
@@ -67,12 +68,15 @@ def corridor_cells(roads):
             vertices = [edge(a, 1), edge(b, 1), edge(b, -1), edge(a, -1)]
             if not all(math.isfinite(n) for p in vertices for n in p):
                 raise ValueError(f"Non-finite cell: {road['id']}")
-            # Same deterministic triangles as the ribbon renderer/support query.
-            for ids in ((0, 1, 3), (1, 2, 3)):
-                triangle = [vertices[i] for i in ids]
-                poly = Polygon([p[:2] for p in triangle])
-                if poly.area > 1e-8:
-                    yield poly, triangle
+            # Index one quad per section; split with the renderer's deterministic
+            # diagonals only after a building is a spatial candidate.
+            poly = Polygon([p[:2] for p in vertices])
+            if poly.area > 1e-8:
+                yield poly, vertices
+
+
+def cell_triangles(vertices):
+    return [[vertices[i] for i in ids] for ids in ((0, 1, 3), (1, 2, 3))]
 
 
 def clip_height(vertices, level, above):
@@ -114,6 +118,7 @@ def prepare_clearance(buildings, roads, center):
         props['preparedExtent'] = [base, top]
         original = transform(forward, shape(feature['geometry']))
         local = polygonal(make_valid(original))
+        localPrepared = prep(local)
         if local.is_empty or top <= base:
             raise ValueError(f"Invalid building volume: {feature['id']}")
         if not original.is_valid:
@@ -121,9 +126,12 @@ def prepare_clearance(buildings, roads, center):
         hits = []
         for i in tree.query(local):
             poly, vertices = cells[i]
-            heights = [p[2] for p in vertices]
-            if min(heights) < top and max(heights) + VEHICLE_HEIGHT > base and poly.intersects(local):
-                hits.append((poly, vertices))
+            if not localPrepared.intersects(poly):
+                continue
+            for triangle in cell_triangles(vertices):
+                heights = [p[2] for p in triangle]
+                if min(heights) < top and max(heights) + VEHICLE_HEIGHT > base:
+                    hits.append((poly, triangle))
         if not hits:
             continue
         cuts = {base, top}
