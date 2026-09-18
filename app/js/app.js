@@ -1115,8 +1115,11 @@ function animate() {
         ll[1] > bb[3] ||
         (boundaryPolygons.length &&
           !boundaryPolygons.some((r) => inPolygon(state.x, state.z, r)));
+      // Roads over water (bridges, causeways) stay drivable: water only
+      // blocks off-road positions with no road contact. Tunnels under
+      // water also retain contact, so they pass through as well.
       const water =
-        !contact?.tunnel && (!contact || contact.y < 0.1) &&
+        !contact &&
         waterPolygons.some((r) => inPolygon(state.x, state.z, r));
       if (outside || water || blocked(
         state.x,
