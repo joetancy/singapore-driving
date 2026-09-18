@@ -119,10 +119,10 @@ def convert(source,boundary_path,output):
  def road_width(p):
   # Mirrors scripts/road-network.mjs roadWidth so importer clearance uses the
   # same normalized widths as the static build. Explicit widths win; otherwise
-  # lane counts (then highway-class lane defaults) set the width. Limits 4-32m.
+  # lane counts (then highway-class lane defaults) × fixed 3.5 m lanes.
   try:
    explicit=float(p.get('width',0))
-   if explicit>0:return max(4,min(32,explicit))
+   if explicit>0:return max(3.5,min(32,explicit))
   except ValueError:pass
   def count(value):
    try:return int(value) if int(value)>0 else 0
@@ -130,7 +130,7 @@ def convert(source,boundary_path,output):
   lanes=count(p.get('lanes')) or count(p.get('lanes:forward'))+count(p.get('lanes:backward'))
   highway=p.get('highway','');link=highway.endswith('_link');fast=highway in {'motorway','motorway_link','trunk','trunk_link'}
   fallback=1 if link else 3 if fast else 1 if highway=='service' else 2
-  return max(4,min(32,(lanes or fallback)*(3.5 if fast else 3.1)+(1 if fast else .6)))
+  return min(32,(lanes or fallback)*3.5)
  def number(value,default=0):
   try:return float(value)
   except (TypeError,ValueError):return default

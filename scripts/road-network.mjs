@@ -11,15 +11,20 @@ export const nominalHeight = (p) => {
   return p.bridge && p.bridge !== "no" ? Math.max(4, layer * 4) : Math.max(0, layer * 4);
 };
 const count = (value) => Number.isInteger(Number(value)) && Number(value) > 0 ? Number(value) : 0;
-export function roadWidth(properties = {}) {
-  const explicit = parseFloat(properties.width);
-  if (explicit > 0) return Math.max(4, Math.min(32, explicit));
+// Fixed lane width: every road is lanes × LANE_WIDTH so a 2-lane road
+// renders the same everywhere instead of varying by class or overlap fit.
+export const LANE_WIDTH = 3.5;
+export function laneCount(properties = {}) {
   const lanes = count(properties.lanes) ||
     count(properties["lanes:forward"]) + count(properties["lanes:backward"]);
   const link = /_link$/.test(properties.highway || "");
   const fast = /^(motorway|trunk)/.test(properties.highway || "");
-  const fallback = link ? 1 : fast ? 3 : properties.highway === "service" ? 1 : 2;
-  return Math.max(4, Math.min(32, (lanes || fallback) * (fast ? 3.5 : 3.1) + (fast ? 1 : 0.6)));
+  return lanes || (link ? 1 : fast ? 3 : properties.highway === "service" ? 1 : 2);
+}
+export function roadWidth(properties = {}) {
+  const explicit = parseFloat(properties.width);
+  if (explicit > 0) return Math.max(LANE_WIDTH, Math.min(32, explicit));
+  return Math.min(32, laneCount(properties) * LANE_WIDTH);
 }
 // OSM ways are drawn in their recorded direction. Singapore traffic keeps left.
 export function laneLayout(properties = {}) {
@@ -29,8 +34,8 @@ export function laneLayout(properties = {}) {
   const reverse = properties.oneway === "-1";
   let forward = count(properties["lanes:forward"]), backward = count(properties["lanes:backward"]);
   const total = count(properties.lanes);
-  // Untagged one-way counts derive from width with a 3.2 m target lane width.
-  const widthDerived = () => Math.max(1, Math.round((roadWidth(properties) - 0.6) / 3.2));
+  // Untagged one-way counts derive from width with a fixed lane width.
+  const widthDerived = () => Math.max(1, Math.round(roadWidth(properties) / LANE_WIDTH));
   if (oneWay) forward ||= total || widthDerived();
   else if (!forward && !backward) {
     forward = total ? Math.ceil(total / 2) : 1;

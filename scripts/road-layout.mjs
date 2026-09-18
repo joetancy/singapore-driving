@@ -1,4 +1,4 @@
-import { roadWidth } from './road-network.mjs';
+import { laneCount, LANE_WIDTH, roadWidth } from './road-network.mjs';
 
 const nearest = (p, a, b) => {
   const dx = b[0] - a[0], dz = b[1] - a[1];
@@ -80,7 +80,10 @@ export function prepareLayout(features, samples, connections = null) {
             Math.abs(hit.y - (e.a[2] + e.b[2]) / 2) < 0.3 &&
             available < (e.width + q.width) / 2) {
           const factor = available / ((e.width + q.width) / 2);
-          if (Math.min(e.width, q.width) * factor < 2.8) continue;
+          // Never squeeze below whole lanes: a 2-lane road keeps 2 ×
+          // LANE_WIDTH and overlapping carriageways stay overlapped.
+          if (e.width * factor < laneCount(e.f.properties) * LANE_WIDTH ||
+            q.width * factor < laneCount(q.f.properties) * LANE_WIDTH) continue;
           widths.set(e.source, Math.min(widths.get(e.source), e.width * factor));
           widths.set(q.source, Math.min(widths.get(q.source), q.width * factor));
           flags.noLamps = true;

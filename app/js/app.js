@@ -1434,11 +1434,28 @@ function animate() {
             state.speed *= 0.55;
           }
         } else {
-          state.x = oldX;
-          state.z = oldZ;
-          state.speed *= 0.2;
-          scraping = false;
-          stopToast(full.kind);
+          // Glide along the road ribbon: axis slides both fail on
+          // diagonal rails, so project the step onto the road tangent.
+          // ponytail: road tangent proxies the wall normal; sharp curves
+          // or junctions need the real obstacle normal instead.
+          const road = full.contact ?? activeRoad;
+          let glide = null;
+          if (road) {
+            const rx = road.b[0] - road.a[0], rz = road.b[1] - road.a[1];
+            const len = Math.hypot(rx, rz) || 1;
+            const dot = ((nx - oldX) * rx + (nz - oldZ) * rz) / len;
+            glide = probeMove(oldX + (rx / len) * dot, oldZ + (rz / len) * dot);
+          }
+          if (glide?.res === "free") acceptMove(glide.contact);
+          else {
+            state.x = oldX;
+            state.z = oldZ;
+            stopToast(full.kind);
+          }
+          if (!scraping) {
+            scraping = true;
+            state.speed *= 0.55;
+          }
         }
       } else {
         // Unsupported elevated edge: past a deck end or into a chunk that

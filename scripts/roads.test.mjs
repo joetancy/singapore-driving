@@ -128,8 +128,8 @@ passage.dispose();
 
 // Single-lane slip roads must not inherit an oversized multi-lane surface.
 const { roadWidth } = await import('./road-network.mjs');
-assert.equal(roadWidth({ highway: 'motorway_link', lanes: '1' }), 4.5);
-assert.equal(roadWidth({ highway: 'motorway', lanes: '3' }), 11.5);
+assert.equal(roadWidth({ highway: 'motorway_link', lanes: '1' }), 3.5);
+assert.equal(roadWidth({ highway: 'motorway', lanes: '3' }), 10.5);
 assert.equal(roadWidth({ highway: 'motorway_link', width: '6.2', lanes: '1' }), 6.2);
 
 // An explicit off-ramp joins the elevated mainline even at a diverging angle.
@@ -240,7 +240,10 @@ const parallelSamples = new Map([
   ['upper', [[0, 7, 0, 0, 0, 1], [20, 7, 0, 20, 0, 1]]],
 ]);
 const fitted = prepareLayout(overlapFeatures, parallelSamples);
-assert((fitted.widths.get('lower') + fitted.widths.get('upper')) / 2 + 1.8 <= 7.00001);
+// No sub-lane squeeze: parallel carriageways keep whole-lane widths even
+// when their centre lines sit closer than the ribbons are wide.
+assert.equal(fitted.widths.get('lower'), roadWidth(overlapFeatures[0].properties));
+assert.equal(fitted.widths.get('upper'), roadWidth(overlapFeatures[1].properties));
 const stackedSamples = new Map(parallelSamples);
 stackedSamples.set('upper', [[0, 7, 4, 0, 0, 1], [20, 7, 4, 20, 0, 1]]);
 assert.equal(prepareLayout(overlapFeatures, stackedSamples).widths.get('lower'), roadWidth(overlapFeatures[0].properties));
@@ -249,7 +252,8 @@ const twinTunnels = new Map([
   ['upper', [[20, 7, -4, 0, 0, -1], [0, 7, -4, 20, 0, -1]]],
 ]);
 const fittedTunnels = prepareLayout(overlapFeatures, twinTunnels);
-assert((fittedTunnels.widths.get('lower') + fittedTunnels.widths.get('upper')) / 2 + 2.5 <= 7.00001);
+assert.equal(fittedTunnels.widths.get('lower'), roadWidth(overlapFeatures[0].properties));
+assert.equal(fittedTunnels.widths.get('upper'), roadWidth(overlapFeatures[1].properties));
 assert(!fittedTunnels.segments.get('lower')[0].left, 'Adjacent tunnels must retain their separating walls');
 
 // Shared preparation entry: one representation for rendering, contact,
@@ -305,9 +309,9 @@ assert(!retainElevated({ ...deck, a: [0, 0, 0], b: [100, 0, 0] }, 0, 101, 0));
 assert(!retainElevated(null, 4, 101, 0));
 console.log("covered levels and elevated edge retention checks passed");
 
-// Width-derived one-way counts use a 3.2 m target lane width; impossible
+// Width-derived one-way counts use the fixed 3.5 m lane width; impossible
 // directional totals report and fall back to the class default.
-assert.equal(laneLayout({ highway: "primary", oneway: "yes", width: "12" }).forward, 4);
+assert.equal(laneLayout({ highway: "primary", oneway: "yes", width: "12" }).forward, 3);
 const inconsistent = laneLayout({ highway: "residential", lanes: "3", "lanes:forward": "2", "lanes:backward": "2" });
 assert.deepEqual([inconsistent.forward, inconsistent.backward, inconsistent.total], [1, 1, 2]);
 assert.deepEqual(inconsistent.warnings, ["inconsistent lanes"]);
@@ -392,16 +396,16 @@ const merge = prepareAssets([
 ], center);
 const wide = merge.roads.find((r) => r.id === "merge-wide");
 const narrow = merge.roads.find((r) => r.id === "merge-narrow");
-assert.equal(wide.width, 9.9);
-assert.equal(narrow.width, 6.8);
+assert.equal(wide.width, 10.5);
+assert.equal(narrow.width, 7);
 assert.equal(wide.tapers.length, 1, "Wider side tapers to the merge");
 assert.deepEqual(narrow.tapers, [], "Narrower side stays constant");
 const [zone] = wide.tapers;
-assert(Math.abs((zone.d1 - zone.d0) - 24.8) < 0.01, "Taper runs ~8 m per metre of width lost");
-assert.equal(zone.w0, 9.9, "Interior side keeps full width");
-assert.equal(zone.w1, 6.8, "Boundary matches the narrower road exactly");
+assert(Math.abs((zone.d1 - zone.d0) - 28) < 0.01, "Taper runs ~8 m per metre of width lost");
+assert.equal(zone.w0, 10.5, "Interior side keeps full width");
+assert.equal(zone.w1, 7, "Boundary matches the narrower road exactly");
 assert.equal(zone.d1, wide.samples.at(-1)[3]);
-assert.equal(widthAt(wide.tapers, zone.d1, wide.width), 6.8);
+assert.equal(widthAt(wide.tapers, zone.d1, wide.width), 7);
 const forked = prepareAssets([
   road("merge-wide", [[103.849, 1.29], mergeJunction], { highway: "primary", lanes: "3", endNodeId: "merge-j" }),
   road("merge-narrow", [mergeJunction, mergeEnd], { highway: "primary", lanes: "2", startNodeId: "merge-j" }),
