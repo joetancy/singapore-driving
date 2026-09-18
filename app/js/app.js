@@ -677,18 +677,21 @@ function rebuildCollisionLists() {
   lastMinimapSync = performance.now();
 }
 function updateNightLights() {
-  for (const light of nightLights) scene.remove(light);
-  nightLights = [];
-  if (!night) return;
+  while (nightLights.length < 8) {
+    const light = new THREE.PointLight("#ffe6a5", 1.2, 100, 2);
+    light.visible = false;
+    scene.add(light);
+    nightLights.push(light);
+  }
   const lamps = pickNightLights(
     [...chunkState.values()].flatMap((c) => c.group?.userData.lamps || []),
     state.x, state.z);
-  for (const lamp of lamps) {
+  for (let i = 0; i < nightLights.length; i++) {
+    const light = nightLights[i], lamp = lamps[i];
+    light.visible = !!night && !!lamp;
+    if (!lamp) continue;
     const { x, y, z } = Array.isArray(lamp) ? { x: lamp[0], y: lamp[1], z: lamp[2] } : lamp;
-    const light = new THREE.PointLight("#ffe6a5", 1.2, 100, 2);
     light.position.set(x, y, z);
-    scene.add(light);
-    nightLights.push(light);
   }
 }
 function buildTunnelOpeningsFromChunks() {
