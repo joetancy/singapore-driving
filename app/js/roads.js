@@ -1,5 +1,7 @@
 import { nearestPoint } from "./physics.js";
 import { allowedDirection } from "./traffic-sim.js";
+import { surfaceCell, cellHeight } from "./road-shape.js";
+export { widthAt } from "./road-shape.js";
 
 export const sampleHeight = (r, t) => r.a[2] + (r.b[2] - r.a[2]) * t;
 
@@ -34,14 +36,18 @@ export function indexAddRoads(index, roads) {
   const { cells, nodes, byId } = index;
   for (const r of roads) {
     if (byId.has(r.id)) continue;
+    const dx = r.b[0] - r.a[0], dz = r.b[1] - r.a[1], length = Math.hypot(dx, dz) || 1;
+    const section = p => p.length >= 6 ? p : [p[0], p[1], p[2], 0, -dz / length, dx / length];
+    const [wa, wb] = r.widths || [r.width, r.width];
+    r.cell = surfaceCell(section(r.a), section(r.b), wa, wb);
     byId.set(r.id, r);
     for (const p of [r.a, r.b]) {
       const k = nodeKey(p);
       if (!nodes.has(k)) nodes.set(k, []);
       nodes.get(k).push(r);
     }
-    for (let x = Math.floor((Math.min(r.a[0], r.b[0]) - r.width) / 50); x <= Math.floor((Math.max(r.a[0], r.b[0]) + r.width) / 50); x++)
-      for (let z = Math.floor((Math.min(r.a[1], r.b[1]) - r.width) / 50); z <= Math.floor((Math.max(r.a[1], r.b[1]) + r.width) / 50); z++) {
+    for (let x = Math.floor(Math.min(...r.cell.map(p => p[0])) / 50); x <= Math.floor(Math.max(...r.cell.map(p => p[0])) / 50); x++)
+      for (let z = Math.floor(Math.min(...r.cell.map(p => p[1])) / 50); z <= Math.floor(Math.max(...r.cell.map(p => p[1])) / 50); z++) {
         const k = `${x},${z}`;
         if (!cells.has(k)) cells.set(k, []);
         cells.get(k).push(r);
@@ -100,13 +106,8 @@ export function surfaceAt(index, x, z, active = null, height = 0) {
   }
   let best = null;
   for (const r of candidates) {
-    const p = nearestPoint(x, z, r.a, r.b), y = sampleHeight(r, p.t);
-    const length = Math.hypot(r.b[0] - r.a[0], r.b[1] - r.a[1]);
-    if (!length || p.d > r.width / 2 + 0.6) continue;
-    const along = ((x - r.a[0]) * (r.b[0] - r.a[0]) +
-      (z - r.a[1]) * (r.b[1] - r.a[1])) / length;
-    // Do not let the rounded nearest-point cap carry the car past a deck end.
-    if (along < -0.6 || along > length + 0.6) continue;
+    const p = nearestPoint(x, z, r.a, r.b), y = cellHeight(r.cell, x, z);
+    if (y === null) continue;
     const linked = connected.has(r.id);
     if (active && !linked) {
       // Only ground-level junctions allow transfers without an explicit link.
@@ -155,15 +156,6 @@ export function pastSegmentEnd(r, x, z, margin = 0.6) {
 // Width within a lane-merge taper zone (absolute sample distances, cosine
 // easing); the feature width outside zones. Zones never overlap, so the
 // first match wins.
-export function widthAt(tapers, d, width) {
-  for (const t of tapers || []) {
-    if (d < t.d0 || d > t.d1) continue;
-    const s = (d - t.d0) / (t.d1 - t.d0 || 1);
-    return t.w0 + (t.w1 - t.w0) * (0.5 - 0.5 * Math.cos(Math.PI * s));
-  }
-  return width;
-}
-
 // Box-junction cross-hatch bars for one sample pair: diagonal bars every
 // spacing metres, alternating direction for the criss-cross read,
 // deterministic from absolute distances so chunk reloads never restart the

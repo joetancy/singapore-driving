@@ -31,7 +31,7 @@ const $ = (id) => document.getElementById(id),
   d3 = window.d3;
 // Refuse mixed generations: must match PREPARED_ROAD_SCHEMA_VERSION in
 // scripts/prepare.mjs (pinned by the schema test in scripts/roads.test.mjs).
-const EXPECTED_ROAD_SCHEMA = 11;
+const EXPECTED_ROAD_SCHEMA = 12;
 const canvas = $("world"),
   keys = new Set(),
   touches = new Map();
@@ -72,6 +72,7 @@ let lastSupported = { x: 0, z: 0, yaw: 0, y: 0, surfaceId: null, chunkId: null }
 let waitingForChunk = false;
 // R3-02: wrong-way warning with hysteresis (1s sustained, 0.5s clear).
 let wrongWayActive = false, wrongWayTimer = 0, wrongWayClearTimer = 0;
+let lastWrongWayUpdate = performance.now();
 const lookTarget = new THREE.Vector3(),
   cameraTarget = new THREE.Vector3(),
   sunTarget = new THREE.Object3D();
@@ -120,10 +121,16 @@ function setNight(value) {
   updateNightLights();
 }
 async function json(url) {
-  const response = await fetch(url);
+  const target = new URL(url, location.href);
+  if (manifest?.generation) target.searchParams.set('v', manifest.generation);
+  const response = await fetch(target, { cache: 'no-cache' });
   if (!response.ok)
     throw new Error(`Could not load ${url} (${response.status})`);
-  return response.json();
+  const data = await response.json();
+  if (manifest?.assets?.[url.replace(/^\.\/data\//, '')] &&
+      (data.generation !== manifest.generation || data.roadVersion !== EXPECTED_ROAD_SCHEMA))
+    throw new Error('Mixed map generation: reload after rebuilding the complete site');
+  return data;
 }
 function point(p) {
   return projection(p);
@@ -333,14 +340,13 @@ function createChunk(data, bbox) {
           name: props.name || "Local road", oneway: props.oneway,
           source: props.sourceId || String(f.id).replace(/-\d+-\d+$/, ""), featureId: f.id,
           connections: [...(props.connections?.start || []), ...(props.connections?.end || [])],
-          highway: props.highway, laneLayout: props.laneLayout,
+          highway: props.highway, laneLayout: props.laneLayout, layout, widths: [wa, wb],
           tunnel: Math.min(a[2], b[2]) < -0.3 };
         segments.push(segment);
         if (segment.tunnel) tunnelGeo.push(tunnelPassage(a, b, [wa + 2, wb + 2], 3.5, layout));
         // Collect fixed tunnel openings for open ramps (approaches/portals).
         // Covered tunnels (max height <= -3.85) do not cut the terrain.
         if (segment.tunnel && Math.max(a[2], b[2]) > -3.85) {
-          if (!chunkTunnelOpenings) chunkTunnelOpenings = [];
           chunkTunnelOpenings.push({ a: [a[0], a[1]], b: [b[0], b[1]], width: Math.max(wa, wb) });
         }
         const elevated = Math.max(a[2], b[2]) > 0.3,
@@ -436,13 +442,8 @@ function createChunk(data, bbox) {
         }
         if (!atJunction(a[3]) && !atJunction(b[3])) for (const side of [-1, 1]) {
           if (layout[side === -1 ? "right" : "left"]) continue;
-          const edgeOffset = (d) => {
-            const divs = dividersAt(d);
-            return side > 0 ? (divs[divs.length - 1] + widthAt(tapers, d, width) / 2) / 2
-              : (divs[0] - widthAt(tapers, d, width) / 2) / 2;
-          };
           markGeo.push(ribbon(a, b, 0.12, 0.09, "#e7e8d6",
-            [edgeOffset(a[3]), edgeOffset(b[3])]));
+            [side * (wa / 2 - 0.3), side * (wb / 2 - 0.3)]));
         }
         // Yellow box hatching marks genuine angled crossings (prepared
         // `crossing` flag). Legacy assets without the flag fall back to the
@@ -499,16 +500,14 @@ function createChunk(data, bbox) {
         if (lanes?.total > 1 && !segment.tunnel && !layout.junction) for (let d = Math.ceil((a[3] + 0.01) / 45) * 45; d < b[3] - 0.01; d += 45) {
           if (atJunction(d)) continue;
           const p = interpolate((d - a[3]) / (b[3] - a[3])), wD = widthAt(tapers, d, width);
-          const divs = laneDividersAt(tapers, d, wD, lanes);
+          const divs = [-wD / 2, ...dividersAt(d), wD / 2];
           const arrow = (lateral, direction) => {
             const x = p[0] + p[4] * lateral, z = p[1] + p[5] * lateral, tx = p[5] * direction, tz = -p[4] * direction;
             markGeo.push(quad([x - tx * 1.6, z - tz * 1.6], [x + tx * 1.6, z + tz * 1.6], 0.24, p[2] + 0.095, "#e7e8d6"));
             markGeo.push(quad([x + tx * 1.55, z + tz * 1.55], [x + tx * 0.55 + p[4] * 0.75, z + tz * 0.55 + p[5] * 0.75], 0.2, p[2] + 0.095, "#e7e8d6"));
             markGeo.push(quad([x + tx * 1.55, z + tz * 1.55], [x + tx * 0.55 - p[4] * 0.75, z + tz * 0.55 - p[5] * 0.75], 0.2, p[2] + 0.095, "#e7e8d6"));
           };
-          // Forward lanes: divs indices 0..forward-1 correspond to lane centers from left edge
-          // Actually divs are lane boundaries; lane centers are midpoints between them.
-          // Forward lanes are at positive lateral; their boundaries are divs[backward..backward+forward]
+          // Include both road edges when taking lane-boundary midpoints.
           const fStart = lanes.backward;
           for (let n = 0; n < lanes.forward; n++) {
             const lateral = (divs[fStart + n] + divs[fStart + n + 1]) / 2;
@@ -521,19 +520,19 @@ function createChunk(data, bbox) {
         }
       }
     } else {
-      const height = clamp(
+      const base = props.preparedExtent?.[0] ?? Math.max(0, parseFloat(props.min_height) || 0),
+        height = props.preparedExtent?.[1] ?? clamp(
           parseFloat(props.height) ||
             (parseFloat(props["building:levels"] || props.building_levels) ||
               4) * 3.2,
           3,
           310,
-        ),
-        base = Math.max(0, parseFloat(props.min_height) || 0);
+        );
       const clearance = props.clearanceGeometry,
         clearanceHeight = Math.min(height, Number(props.clearanceHeight) || height),
         bands = Array.isArray(props.clearanceBands) && props.clearanceBands.length
           ? props.clearanceBands.map((b) => [
-              (b.cleared ? ringsOf({ geometry: clearance }) : ringsOf(f)),
+              (b.geometry ? ringsOf({ geometry: b.geometry }) : b.cleared ? ringsOf({ geometry: clearance }) : ringsOf(f)),
               Math.max(base, b.base), Math.min(height, b.height),
             ]).filter(([, lo, hi]) => hi - lo > 0.00001)
           : clearance ? [
@@ -551,7 +550,7 @@ function createChunk(data, bbox) {
         const hash = String(f.id || height)
             .split("")
             .reduce((a, c) => a + c.charCodeAt(0), 0),
-          renderBase = bandBase + (hash % 23) * 0.006,
+          renderBase = bandBase,
           g = new THREE.ExtrudeGeometry(polygonShape(rings), {
             depth: Math.max(0.01, bandHeight - bandBase),
             bevelEnabled: false,
@@ -564,7 +563,7 @@ function createChunk(data, bbox) {
         buildingGeo.push(colourGeometry(g, palette[hash % palette.length]));
         blocks.push({
           rings,
-          clearancePrepared: !!clearance,
+          clearancePrepared: props.clearancePrepared === true,
           base: bandBase,
           height: bandHeight,
           bbox: [
@@ -1154,7 +1153,6 @@ function blocked(x, z, y, road = null) {
   const onRoad = road && road.d <= road.width / 2 + 0.6;
   const boxRadius = 2.3;
   for (const b of obstacles) {
-    if (onRoad && !b.clearancePrepared && !b.guard) continue;
     if (b.base > y + 1.7 || b.height < y) continue;    if (
       x < b.bbox[0] - boxRadius ||
       x > b.bbox[2] + boxRadius ||
@@ -1189,6 +1187,9 @@ function resetCar(announce = true) {
   };
   scraping = false;
   waitingForChunk = false;
+  wrongWayActive = false;
+  wrongWayTimer = wrongWayClearTimer = 0;
+  lastWrongWayUpdate = performance.now();
   let nearest = getNearestRoad(state.x, state.z);
   if (!nearest && spawnSelection) {
     spawnSelection = null;
@@ -1346,19 +1347,19 @@ function hud() {
   $("distance").innerHTML = distance.toFixed(2) + " <small>KM</small>";
   const roadDx = nearRoad?.b[0] - nearRoad?.a[0], roadDz = nearRoad?.b[1] - nearRoad?.a[1];
   const roadLength = nearRoad && Math.hypot(roadDx, roadDz);
-  const travel = nearRoad && (Math.sin(state.yaw) * roadDx - Math.cos(state.yaw) * roadDz);
+  const travel = nearRoad && Math.sign(state.speed) * (Math.sin(state.yaw) * roadDx - Math.cos(state.yaw) * roadDz);
   const lateral = nearRoad && ((state.x - nearRoad.x) * -roadDz + (state.z - nearRoad.z) * roadDx) / roadLength;
-const road = nearRoad;
+  const road = nearRoad;
   const layout = road?.laneLayout;
-  const inJunction = layout && (layout.junction || layout.crossing);
+  const inJunction = road?.layout?.junction || road?.layout?.crossing;
   const sharedLane = layout && layout.total === 1 && !layout.oneWay;
   const stopped = kmh < 1.4; // ~0.4 m/s walking speed
   const offRoad = !road || road.d >= road.width / 2 + 1;
   const loading = waitingForChunk || !ready;
-  const unsupportedDir = !layout || (layout.oneWay && layout.reverse && layout.forward === 0);
+  const unsupportedDir = !layout;
 
   let wrongWayNow = false;
-  if (layout && kmh > 5 && Math.abs(lateral) > 0.5 && !inJunction && !sharedLane && !stopped && !loading && !offRoad && !unsupportedDir) {
+  if (layout && kmh > 5 && (layout.oneWay || Math.abs(lateral) > 0.5) && !inJunction && !sharedLane && !stopped && !loading && !offRoad && !unsupportedDir) {
     // Two-way: check if moving against the lane direction for our lateral position.
     // Forward lanes (lateral > 0) should have travel > 0; backward lanes (lateral < 0) should have travel < 0.
     if (layout.oneWay) {
@@ -1369,7 +1370,9 @@ const road = nearRoad;
   }
 
   // Hysteresis: 1s sustained to activate, 0.5s clear to deactivate.
-  const dtHud = 1 / 60; // approximate frame time
+  const now = performance.now();
+  const dtHud = Math.min((now - lastWrongWayUpdate) / 1000, 0.25);
+  lastWrongWayUpdate = now;
   if (wrongWayNow) {
     wrongWayTimer += dtHud;
     wrongWayClearTimer = 0;
@@ -1543,13 +1546,12 @@ function animate() {
         }
       }
       if (sweptRes.res !== "free") {
-        // Restore to last supported pose instead of substep origin.
-        state.x = lastSupported.x;
-        state.z = lastSupported.z;
-        state.yaw = lastSupported.yaw;
+        // A collision must not teleport an off-road car to its last road.
+        state.x = oldX;
+        state.z = oldZ;
         // If we have a supported surface but its chunk isn't loaded, wait.
         const supportChunk = lastSupported.chunkId;
-        if (supportChunk && !chunkState.has(supportChunk)) {
+        if (supportChunk && !chunkState.get(supportChunk)?.group) {
           waitingForChunk = true;
           if (now - lastHud > 2000) {
             lastHud = now;
@@ -1560,8 +1562,19 @@ function animate() {
           state.speed *= 0.2;
           scraping = false;
         } else {
-          // Blocked by building/water/boundary.
-          state.speed *= 0.55;
+          // Keep rolling along barriers instead of sticking to them.
+          let slide = probeMove(nx, oldZ);
+          if (slide.res !== "free") slide = probeMove(oldX, nz);
+          const road = sweptRes.contact ?? activeRoad;
+          if (slide.res !== "free" && road) {
+            const rx = road.b[0] - road.a[0], rz = road.b[1] - road.a[1];
+            const length = Math.hypot(rx, rz) || 1;
+            const along = ((nx - oldX) * rx + (nz - oldZ) * rz) / length;
+            slide = probeMove(oldX + rx / length * along, oldZ + rz / length * along);
+          }
+          if (slide.res === "free") acceptMove(slide.contact);
+          else { state.x = oldX; state.z = oldZ; stopToast(sweptRes.kind); }
+          if (!scraping) state.speed *= 0.55;
           scraping = true;
         }
       }
@@ -1826,6 +1839,8 @@ async function init() {
       throw new Error(
         `Road data schema ${manifest.roadVersion} != ${EXPECTED_ROAD_SCHEMA}: rebuild with npm run build`,
       );
+    if (!manifest.generation || !manifest.assets || manifest.chunks.some(c => !manifest.assets[c.file]))
+      throw new Error("Incomplete prepared generation: rebuild with npm run build");
     const preferences = loadPreferences();
     if (preferences.spawn) {
       manifest.spawn = preferences.spawn.spawn;
@@ -1896,7 +1911,8 @@ async function init() {
     animate();
     canvas.addEventListener("webglcontextlost", (e) => {
       e.preventDefault();
-      setPaused(true);
+      ready = false;
+      clearDrivingInput();
       $("loading").classList.remove("hidden");
       $("loading-message").textContent =
         "The graphics context was interrupted. Reload the page to resume.";

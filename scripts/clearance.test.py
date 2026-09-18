@@ -126,7 +126,11 @@ def main():
             # the original footprint.
             ramp = buildings["way/202-0"]
             ramp_bands = ramp["properties"]["clearanceBands"]
-            assert [b["cleared"] for b in ramp_bands] == [False, True, False]
+            assert not ramp_bands[0]['cleared'] and not ramp_bands[-1]['cleared']
+            cut_bands = [b for b in ramp_bands if b['cleared']]
+            assert len(cut_bands) > 2, 'Sloped cuts need different footprints by height'
+            assert all('geometry' in b for b in ramp_bands)
+            assert len({json.dumps(b['geometry']) for b in cut_bands}) > 1
             assert ramp_bands[0]["base"] == 0
             assert 3.0 < ramp_bands[1]["base"] < 3.7
             assert round(ramp_bands[-1]["height"], 6) == 12.8

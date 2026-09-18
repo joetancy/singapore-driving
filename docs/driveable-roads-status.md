@@ -1,5 +1,44 @@
 # Driveable-roads status ledger
 
+## Current status (18 September 2026)
+
+This ledger supersedes the historical notes below. R1 pipeline work is
+implemented and the non-browser gates pass. R2/R3 remain partially complete;
+manual browser, real-device, route, and performance checks were intentionally
+not run because they are reserved for the user.
+
+- Schema: 12
+- Latest build generation: `6523f3a110b01316`
+- `npm test`: PASS
+- `npm run check`: PASS
+- `python3 scripts/clearance.test.py`: PASS
+- `npm run build`: PASS (401088 segments, 5260 warnings, 2745 chunks)
+- Browser smoke/manual/performance checks: NOT RUN
+- Deployment: NOT performed
+
+### Verified implementation
+
+- R1 staging preserves the previous output on preparation failure, validates
+  schemas and duplicate IDs, records generation/configuration/assets, and runs
+  exact staged Python clearance before publishing the new generation.
+- Prepared road samples, widths, taper profiles, structures, projection
+  metadata, and deterministic surface-cell triangles are shared by the build.
+- Clearance preserves source footprints/tags, computes height-aware bands from
+  prepared road cells, keeps holes/parts, and records structured warnings.
+- Runtime validates schema/generation-qualified data and renders per-band
+  derived geometry without the old unconditional road-collision bypass.
+
+### Explicitly incomplete
+
+- R2 topology still has documented legacy/synthetic-node limitations and needs
+  stronger end-to-end connection fixtures and route acceptance evidence.
+- R2 runtime support/chunk pinning and R3 lane/spawn/marking/lamp behavior have
+  not been manually verified in the browser.
+- R3 performance/resource measurements, repeated travel-loop leak checks,
+  screenshots, and real mobile-device checks are not run.
+- The optional development overlay and several full PLAN validation IDs remain
+  unimplemented or unverified.
+
 Plan: `PLAN.md` (expanded, working tree). `AGENT_HANDOFF.md` / `SOURCE_PLAN.md`
 not present in repo — references to them are treated as missing; `PLAN.md`
 is the specification.

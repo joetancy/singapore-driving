@@ -9,6 +9,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 import xml.etree.ElementTree as ET
 import numpy as np
+from clearance import prepare_clearance
 from shapely.geometry import shape, mapping, Polygon, LineString, Point
 from shapely.ops import transform
 from shapely.ops import unary_union, polygonize
@@ -153,7 +154,10 @@ def convert(source,boundary_path,output,allow_approximate=False):
   except ValueError:layer=0
   if p.get('tunnel') not in (None,'no') or layer<0:return min(-4,layer*4)
   return max(4,layer*4) if p.get('bridge') not in (None,'no') else max(0,layer*4)
- def building_height(p):return number(p.get('height')) or number(p.get('building:levels',p.get('building_levels')),4)*3.2
+ def building_height(p):
+  base=max(0,number(p.get('min_height')))
+  top=number(p.get('height')) or number(p.get('building:levels',p.get('building_levels')),4)*3.2
+  return max(top,base+max(number(p.get('roof:height')),0.1))
  def prepare_road_elevations():
   # Elevation preparation must precede clearance so both use identical
   # heights. Runs the shared scripts/prepare.mjs entry point on the full
@@ -161,7 +165,7 @@ def convert(source,boundary_path,output,allow_approximate=False):
   # failed, mismatched, or corrupt preparation is a release-build error
   # unless allow_approximate explicitly opts into developer-only output.
   script=Path(__file__).parent/'prepare.mjs'
-  EXPECTED_SCHEMA=11 # must match PREPARED_ROAD_SCHEMA_VERSION in prepare.mjs
+  EXPECTED_SCHEMA=12 # must match PREPARED_ROAD_SCHEMA_VERSION in prepare.mjs
   if not shutil.which('node'):
    if not allow_approximate:raise RuntimeError('Node is required for exact road preparation.')
    print('Node not found; using approximate ground-only clearance.')
@@ -247,43 +251,7 @@ def convert(source,boundary_path,output,allow_approximate=False):
      p['clearanceBands']=[dict(base=base,height=split,cleared=True)]+([dict(base=split,height=height,cleared=False)] if height>split else [])
      p['clearancePrepared']=True
  else:
-  quads=[]
-  for r in roads:
-   samples=prepared['samples'].get(r['id'])
-   if not samples or len(samples)<2:continue
-   quads.extend(corridor_quads(samples,prepared['widths'].get(r['id'],road_width(r['properties'])),prepared.get('tapers',{}).get(r['id'])))
-  quad_tree=STRtree([q for q,_,_,_ in quads]) if quads else None
-  if quad_tree:
-   for f in features:
-    p=f['properties'];base=max(0,number(p.get('min_height')))
-    top=building_height(p)
-    if base>=top:continue
-    original=shape(f['geometry']);local=transform(lambda x,y,z=None:project(x,y,center),original)
-    # Clip only where the vehicle-clearance envelope [h,h+1.7] strictly
-    # intersects the building's vertical extent. Tunnels below and buildings
-    # below decks keep their surface footprints; partial overlap splits the
-    # building into vertical bands. Holes and disconnected parts are retained.
-    nearby=quad_tree.query(local)
-    hits=[quads[i] for i in nearby if min(quads[i][1],quads[i][2])<top and max(quads[i][1],quads[i][2])+1.7>base]
-    if not hits:continue  # vertically separated: footprint preserved
-    groundHit=any(not deck for _,_,_,deck in hits)
-    decks=[(min(ha,hb),max(ha,hb)) for _,ha,hb,deck in hits if deck]
-    bands=clearance_bands(base,top,groundHit,decks)
-    clearedBands=[(lo,hi) for lo,hi,cleared in bands if cleared]
-    if not clearedBands:continue
-    # Exact band removal: clip each strip to the height range where its
-    # envelope overlaps the band, instead of erasing the whole quad.
-    clipped=[]
-    for poly,ha,hb,_ in hits:
-     for lo,hi in clearedBands:
-      for ring in clip_quad_to_band(list(poly.exterior.coords)[:4],ha,hb,lo,hi):
-       clipped.append(Polygon(ring))
-    corridor=unary_union(clipped)
-    if corridor.is_empty:continue
-    cleared=transform(lambda x,y,z=None:unproject(x,y,center),local.difference(corridor))
-    p['clearanceGeometry']=mapping(cleared);p['clearanceHeight']=min(top,1.7)
-    p['clearanceBands']=[dict(base=lo,height=hi,cleared=cleared) for lo,hi,cleared in bands]
-    p['clearancePrepared']=True
+   prepare_clearance(features,prepared['roads'],center)
  for r in roads:
   points=r['geometry']['coordinates']
   for i,(a,b) in enumerate(zip(points,points[1:])):

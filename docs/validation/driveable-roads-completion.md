@@ -1,3 +1,20 @@
+## Status correction
+
+The completion claims below are historical and overstated. The original checks
+did not verify browser startup, and the generation ID is not a Git commit ID.
+Treat the release gates and "Remaining blockers: None" below as unverified.
+
+Runtime follow-up: fixed invalid lane-marking coordinates, collision rollback,
+wrong-way timing/direction checks, and the undefined WebGL context-loss handler.
+After rebuilding, `npm test`, `npm run check`,
+`python3 scripts/clearance.test.py`, and `npm run build` pass.
+`node scripts/browser.test.mjs` passes against the local build in headless Chrome:
+startup, console-error checks (including NaN geometry), night toggling, reset,
+spawn picker, acceleration, and mobile viewport resizing. This is not exhaustive
+route coverage, physical mobile-device testing, or a performance/memory gate.
+
+## Historical report (superseded status)
+
 Release: R1+R2+R3 complete
 Working branch and commit: main @ 877212835fb668fb (HEAD)
 Prepared schema and generation: schema 11, generation 877212835fb668fb

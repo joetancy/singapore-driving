@@ -268,7 +268,7 @@ assert(!fittedTunnels.segments.get('lower')[0].left, 'Adjacent tunnels must reta
 
 // Shared preparation entry: one representation for rendering, contact,
 // clearance widths and spawn data, with explicit surface polygons.
-assert.equal(PREPARED_ROAD_SCHEMA_VERSION, 11);
+assert.equal(PREPARED_ROAD_SCHEMA_VERSION, 12);
 const sharedFeatures = [
   road('shared-ground', [[103.85, 1.29], [103.851, 1.29]], { highway: 'primary' }),
   road('shared-bridge', [[103.851, 1.29], [103.852, 1.29]], { highway: 'primary', bridge: 'yes' }),
@@ -423,7 +423,8 @@ const wideRing = surfacePolygon(wide.samples, wide.width, wide.tapers);
 const pairWidth = (l, r) => Math.hypot(l[0] - r[0], l[1] - r[1]);
 const n = wide.samples.length;
 assert(Math.abs(pairWidth(wideRing[0], wideRing[2 * n - 1]) - 10.5) < 0.01);
-assert(Math.abs(pairWidth(wideRing[n - 1], wideRing[n]) - 7) < 0.01);
+assert(Math.abs(pairWidth(wideRing[n - 1], wideRing[n]) - 7 * Math.hypot(...wide.samples.at(-1).slice(4))) < 0.01,
+  'Taper boundary preserves the same miter as the rendered cross-section');
 const forked = prepareAssets([
   road("merge-wide", [[103.849, 1.29], mergeJunction], { highway: "primary", lanes: "3", endNodeId: "merge-j" }),
   road("merge-narrow", [mergeJunction, mergeEnd], { highway: "primary", lanes: "2", startNodeId: "merge-j" }),
@@ -579,7 +580,7 @@ console.log("gantry checks passed");
 const { readFileSync: _read, writeFileSync: _write, mkdirSync: _mkdir, mkdtempSync: _mkdtemp } = await import("node:fs");
 const { tmpdir: _tmpdir } = await import("node:os");
 const { join: _join } = await import("node:path");
-const { buildInto, generationId } = await import("./build.mjs");
+const { buildInto, buildSite, generationId } = await import("./build.mjs");
 // All three schema declarations must agree (JS build, browser guard, importer).
 const appSource = _read(new URL("../app/js/app.js", import.meta.url), "utf8");
 const importerSource = _read(new URL("./import_osm.py", import.meta.url), "utf8");
@@ -623,7 +624,18 @@ assert.equal(stagedFeature.properties.preparedWidth, 6.2, "Explicit width wins a
 assert.equal(stagedFeatures.find((f) => f.id === "plain").properties.preparedWidth, 7,
   "Default 2-lane width lives beside the (absent) raw tag");
 const before = _read(_join(stagedOut, "data", "c.geojson"), "utf8");
+const beforeManifest = _read(_join(stagedOut, "data", "manifest.json"), "utf8");
+const savedPython = process.env.PYTHON;
+try {
+  process.env.PYTHON = _join(stageRoot, "missing-python");
+  assert.throws(() => buildSite(_join(stageRoot, "public"), _join(stageRoot, "app"), stagedOut), /exact Python clearance failed/);
+} finally {
+  if (savedPython === undefined) delete process.env.PYTHON;
+  else process.env.PYTHON = savedPython;
+}
+assert.equal(_read(_join(stagedOut, "data", "manifest.json"), "utf8"), beforeManifest);
+assert.equal(_read(_join(stagedOut, "data", "c.geojson"), "utf8"), before);
 _write(_join(stageRoot, "public", "data", "c.geojson"), "{corrupt");
-assert.throws(() => buildInto(_join(stageRoot, "public"), _join(stageRoot, "app"), _join(stageRoot, "dist2")));
+assert.throws(() => buildSite(_join(stageRoot, "public"), _join(stageRoot, "app"), stagedOut));
 assert.equal(_read(_join(stagedOut, "data", "c.geojson"), "utf8"), before, "Failed preparation must preserve valid output");
 console.log("release pipeline checks passed");

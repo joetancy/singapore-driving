@@ -15,7 +15,7 @@ import { widthAt } from "../app/js/road-shape.js";
 
 // Increment when derived road output changes shape or meaning; the build
 // writes this into the manifest and requires a complete rebuild on mismatch.
-export const PREPARED_ROAD_SCHEMA_VERSION = 11;
+export const PREPARED_ROAD_SCHEMA_VERSION = 12;
 
 const sourceId = (id) => String(id).replace(/-\d+-\d+$/, "");
 
@@ -53,7 +53,7 @@ export function prepareAssets(features, center) {
   const roads = [];
   for (const f of features) {
     if (f.geometry?.type !== "LineString" || !roadVisible(f.properties)) continue;
-    const source = sourceId(f.id);
+    const source = f.properties.sourceId || sourceId(f.id);
     // Width is normalized once here: the globally fitted source width from
     // layout (which narrows distinct parallel carriageways together), falling
     // back to the highway-class default. Renderer, map and importer reuse it.
@@ -70,6 +70,8 @@ export function prepareAssets(features, center) {
       width,
       samples,
       tapers: [],
+      structure: f.properties.tunnel && f.properties.tunnel !== 'no' ? 'tunnel'
+        : f.properties.bridge && f.properties.bridge !== 'no' ? 'bridge' : 'ground',
       layout: layout.segments.get(f.id) || [],
       connections: prepared.connections.get(f.id) || { start: [], end: [] },
       laneLayout: laneLayout(f.properties),
@@ -114,7 +116,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     widths[r.id] = r.width;
     if (r.tapers?.length) tapers[r.id] = r.tapers;
   }
-  process.stdout.write(JSON.stringify({ version: prepared.version, widths, samples, tapers, warnings: prepared.warnings }));
+  process.stdout.write(JSON.stringify({ version: prepared.version, widths, samples, tapers, roads: prepared.roads, warnings: prepared.warnings }));
 }
 
 // Explicit surface polygon from prepared cross-sections, independent of any
@@ -122,20 +124,17 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 // left/right edges sample-to-sample leaves no gaps; the ring closes across
 // the first and last cross-sections, retaining endpoint caps that prevent
 // driving beyond a deck end. Width is evaluated through taper zones at every
-// sample so the polygon matches the rendered deck. Normals are unitized
-// to represent the true physical half-width (sample normals include miter
-// scaling for rendering joins). Returns a closed [x, z] ring.
+// sample so the polygon matches the rendered deck. Preserve miter scaling
+// exactly as the renderer does. Returns a closed [x, z] ring.
 export function surfacePolygon(samples, width, tapers = []) {
   if (!samples || samples.length < 2) return [];
   const left = samples.map((p) => {
     const half = widthAt(tapers, p[3], width) / 2;
-    const len = Math.hypot(p[4], p[5]) || 1;
-    return [p[0] + (p[4] / len) * half, p[1] + (p[5] / len) * half];
+    return [p[0] + p[4] * half, p[1] + p[5] * half];
   });
   const right = samples.map((p) => {
     const half = widthAt(tapers, p[3], width) / 2;
-    const len = Math.hypot(p[4], p[5]) || 1;
-    return [p[0] - (p[4] / len) * half, p[1] - (p[5] / len) * half];
+    return [p[0] - p[4] * half, p[1] - p[5] * half];
   });
   const ring = [...left, ...right.reverse()];
   ring.push([...ring[0]]);

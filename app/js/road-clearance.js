@@ -46,7 +46,8 @@ export function createRoadClearanceIndex() {
           if (Math.hypot(b[0] - a[0], b[1] - a[1]) < 0.001) continue;
           // Covered tunnels permit surface trees; open portal trenches do not.
           if (Math.max(a[2], b[2]) < -3.85) continue;
-          const ring = roadFootprint(a, b, widthAt(p.tapers, a[3], p.width), widthAt(p.tapers, b[3], p.width));
+          const width = p.preparedWidth ?? p.width;
+          const ring = roadFootprint(a, b, widthAt(p.tapers, a[3], width), widthAt(p.tapers, b[3], width));
           const xs = ring.map(v => v[0]), zs = ring.map(v => v[1]);
           const bounds = [Math.min(...xs), Math.min(...zs), Math.max(...xs), Math.max(...zs)];
           const entry = { ring, bounds, bottom: Math.min(a[2], b[2]) - 0.7 };
