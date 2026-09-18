@@ -463,7 +463,8 @@ function createChunk(data, bbox) {
             interpolate((bar.hi - a[3]) / (b[3] - a[3])), 0.18, 0.09, "#d8b93a",
             [s * wLo, -s * wHi]));
         }
-        const spacing = { motorway: 50, trunk: 45, primary: 45 }[props.highway] || 40;
+        const spacing = /^(motorway|motorway_link)$/.test(props.highway || "") ? 50
+          : /^(trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link)$/.test(props.highway || "") ? 45 : 40;
         // Deterministic lamp IDs: ${sourceId}:${ordinal} where ordinal is
         // floor(d/spacing). Skipped candidates don't renumber later ones.
         if (lampsAllowed && uncovered && !segment.tunnel && !layout.noLamps) {
@@ -481,7 +482,7 @@ function createChunk(data, bbox) {
             const road = roadAt(x, z, p[2]);
             const blocked = (road && road.d < road.width / 2 + 0.5) || buildingBases.some((rings) => inPolygon(x, z, rings)) || waterPolygons.some((rings) => inPolygon(x, z, rings));
             if (blocked) continue;
-            const lampId = `${props.sourceId}:${ord}`;
+            const lampId = `${props.sourceId || f.id}:${f.id}:${ord}`;
             const pole = new THREE.CylinderGeometry(0.08, 0.12, 8, 6); pole.translate(x, p[2] + 4, z); pole.userData = { lampId, chunkId: null }; lampGeo.push(pole);
             const rx = -p[4] * side, rz = -p[5] * side, angle = Math.atan2(-rz, rx);
             const arm = new THREE.BoxGeometry(2.6, 0.12, 0.12); arm.rotateY(angle); arm.translate(x + rx * 1.3, p[2] + 7.9, z + rz * 1.3); lampGeo.push(arm);
@@ -798,6 +799,7 @@ function tagChunkGroup(id, group) {
   for (const s of u.segments) s.chunkId = id;
   for (const b of u.blocks) b.chunkId = id;
   for (const t of u.trees || []) t.chunkId = id;
+  for (const lamp of u.lamps || []) lamp.chunkId = id;
 }
 function attachChunk(id) {
   const u = chunkState.get(id)?.group?.userData;

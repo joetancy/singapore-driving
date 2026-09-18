@@ -214,7 +214,7 @@ export function pickNightLights(lamps, x, z, limit = 8, radius = 100) {
       return { p, d: Math.hypot(px - x, pz - z) };
     })
     .filter(({ d }) => d <= radius)
-    .sort((a, b) => a.d - b.d)
+    .sort((a, b) => a.d - b.d || String(a.p.lampId || "").localeCompare(String(b.p.lampId || "")))
     .slice(0, limit)
     .map(({ p }) => p);
 }

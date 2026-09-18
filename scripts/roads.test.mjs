@@ -351,6 +351,10 @@ assert.deepEqual(pickNightLights(lampGrid, 0, 0).map((p) => p[0]),
   [0, 10, 20, 30, 40, 50, 60, 70]);
 assert.equal(pickNightLights([[150, 7, 0]], 0, 0).length, 0);
 assert.equal(pickNightLights(lampGrid, 0, 0, 8, 25).length, 3);
+assert.deepEqual(pickNightLights([
+  { x: 1, y: 7, z: 0, lampId: 'b' },
+  { x: -1, y: 7, z: 0, lampId: 'a' },
+], 0, 0, 2).map((p) => p.lampId), ['a', 'b'], 'Equal-distance lamps have stable ordering');
 console.log("lane estimates and night light budget checks passed");
 
 // Roadside signal heads stand left of the way direction with double-faced
