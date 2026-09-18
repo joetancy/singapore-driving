@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Importer regression check for grade-aware road/building clearance."""
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -9,7 +10,7 @@ from pathlib import Path
 from shapely.geometry import shape
 
 sys.path.insert(0, str(Path(__file__).parent))
-from import_osm import convert
+from import_osm import clip_quad_to_band, convert, project
 
 
 def node(identifier, lon, lat):
@@ -21,6 +22,23 @@ def way(identifier, nodes, tags):
 
 
 def main():
+    # Shared JS/Python projection fixtures (mirrored in roads.test.mjs).
+    center = [103.851, 1.284]
+    for lon_lat, expected in [
+        ((103.85, 1.29), [-111.319491, -668.085482]),
+        ((103.851, 1.284), [0, 0]),
+        ((104.0, 1.35), [16586.604128, -7349.028163]),
+    ]:
+        got = [round(float(v), 6) for v in project(*lon_lat, center)]
+        assert got == expected, f"projection fixture {lon_lat}: {got}"
+    # Band-exact strip clipping: flat strips keep all-or-nothing, sloped
+    # strips keep exactly the overlapping fraction.
+    corners = [[0, 0], [10, 0], [10, 4], [0, 4]]
+    assert clip_quad_to_band(corners, 0, 0, 0, 5) == [corners]
+    assert clip_quad_to_band(corners, 0, 0, 10, 12) == []
+    sloped = clip_quad_to_band(corners, 0, 4, 0, 1.7)
+    assert len(sloped) == 1
+    assert abs(shape({"type": "Polygon", "coordinates": [sloped[0]]}).area - 17) < 0.01
     has_node = shutil.which("node") is not None
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -124,6 +142,22 @@ def main():
             assert 0 < deck_cleared.area < shape(deck["geometry"]).area
         else:
             print("node unavailable; skipped sloped-approach assertion")
+        # Exact preparation is mandatory: without Node the import fails loudly
+        # and writes nothing instead of publishing approximate clearance. The
+        # explicit developer flag still permits the labeled fallback.
+        saved_path = os.environ.get("PATH", "")
+        try:
+            os.environ["PATH"] = str(root)  # no node binary here
+            try:
+                convert(source, boundary_file, output / "approx")
+                assert False, "expected RuntimeError without Node"
+            except RuntimeError:
+                pass
+            assert not (output / "approx").exists(), "failed import must not write output"
+            convert(source, boundary_file, output / "dev", allow_approximate=True)
+            assert (output / "dev" / "manifest.json").exists()
+        finally:
+            os.environ["PATH"] = saved_path
 
 
 if __name__ == "__main__":

@@ -15,6 +15,7 @@ import {
 import { loadPreferences, saveNight, saveSpawn, loadTraffic, saveTraffic, loadNav, saveNav, clearNav } from "./storage.js";
 import { createTraffic } from "./traffic.js";
 import { roadIndex, indexAddRoads, indexRemoveRoads, nearbyRoadway, surfaceAt, sampleHeight, drivingContact, retainElevated, pickNightLights, widthAt, hatchBars, findRoute, turnManeuver } from "./roads.js";
+import { laneDividersAt } from "./road-shape.js";
 import { createSpawnPicker } from "./spawn-map.js";
 import {
   clamp,
@@ -28,6 +29,9 @@ import {
 } from "./physics.js";
 const $ = (id) => document.getElementById(id),
   d3 = window.d3;
+// Refuse mixed generations: must match PREPARED_ROAD_SCHEMA_VERSION in
+// scripts/prepare.mjs (pinned by the schema test in scripts/roads.test.mjs).
+const EXPECTED_ROAD_SCHEMA = 11;
 const canvas = $("world"),
   keys = new Set(),
   touches = new Map();
@@ -63,6 +67,11 @@ let state = { x: 0, z: 0, yaw: 0, speed: 0, steer: 0 },
   nearRoad = null,
   scraping = false,
   frame = 0;
+// R2-03: stateful contact — last known supported pose with surface identity.
+let lastSupported = { x: 0, z: 0, yaw: 0, y: 0, surfaceId: null, chunkId: null };
+let waitingForChunk = false;
+// R3-02: wrong-way warning with hysteresis (1s sustained, 0.5s clear).
+let wrongWayActive = false, wrongWayTimer = 0, wrongWayClearTimer = 0;
 const lookTarget = new THREE.Vector3(),
   cameraTarget = new THREE.Vector3(),
   sunTarget = new THREE.Object3D();
@@ -200,6 +209,7 @@ function createChunk(data, bbox) {
     segments = [],
     lampPoints = [],
     blocks = [],
+    chunkTunnelOpenings = [],
     buildingBases = data.features
       .filter((f) => {
         const p = f.properties || {};
@@ -214,7 +224,7 @@ function createChunk(data, bbox) {
   const roadAt = (x, z, height = null) => {
     let best = null;
     for (const f of data.features) if (f.geometry.type === "LineString") {
-      const width = clamp(parseFloat(f.properties?.width) || 10, 4, 32),
+      const width = clamp(parseFloat(f.properties?.preparedWidth ?? f.properties?.width) || 10, 4, 32),
         pts = f.properties?.samples || f.geometry.coordinates.map(point);
       for (let i = 1; i < pts.length; i++) {
         const hit = nearestPoint(x, z, pts[i - 1], pts[i]);
@@ -284,7 +294,7 @@ function createChunk(data, bbox) {
       f.geometry.type === "MultiLineString"
     ) {
       if (props.roadVisible === false) continue;
-      const width = clamp(parseFloat(props.width) ||
+      const width = clamp(parseFloat(props.preparedWidth ?? props.width) ||
         ({ motorway: 18, trunk: 18, primary: 16, secondary: 14, tertiary: 11,
           residential: 9, service: 6 }[props.highway] || 10), 2, 32);
       const pts = props.samples;
@@ -327,6 +337,12 @@ function createChunk(data, bbox) {
           tunnel: Math.min(a[2], b[2]) < -0.3 };
         segments.push(segment);
         if (segment.tunnel) tunnelGeo.push(tunnelPassage(a, b, [wa + 2, wb + 2], 3.5, layout));
+        // Collect fixed tunnel openings for open ramps (approaches/portals).
+        // Covered tunnels (max height <= -3.85) do not cut the terrain.
+        if (segment.tunnel && Math.max(a[2], b[2]) > -3.85) {
+          if (!chunkTunnelOpenings) chunkTunnelOpenings = [];
+          chunkTunnelOpenings.push({ a: [a[0], a[1]], b: [b[0], b[1]], width: Math.max(wa, wb) });
+        }
         const elevated = Math.max(a[2], b[2]) > 0.3,
           underground = Math.min(a[2], b[2]) < -0.3;
         if (elevated) {
@@ -390,9 +406,8 @@ function createChunk(data, bbox) {
         if (!layout.junction) addTunnelPortal(a, b, [wa, wb], portalGeo, portalInsetGeo);
         const interpolate = (t) => a.map((v, j) => v + (b[j] - v) * t);
         const lanes = props.laneLayout;
-        const dividerAt = (n, w) => (n + 1 - lanes.total / 2) * w / lanes.total;
-        const dividers = lanes?.total > 1 ? Array.from({ length: lanes.total - 1 }, (_, n) =>
-          [dividerAt(n, wa), dividerAt(n, wb)]) : [];
+        // Lane boundaries from prepared metadata (taper-aware, lane-count-aware).
+        const dividersAt = (d) => laneDividersAt(tapers, d, widthAt(tapers, d, width), lanes);
         if (
           Math.max(a[2], b[2]) < -3.85 &&
           Math.floor(a[3] / 22) !== Math.floor(b[3] / 22)
@@ -408,16 +423,26 @@ function createChunk(data, bbox) {
             light[0], ceiling - 0.05, light[1], 2.5, 3.15,
           ));
         }
-        for (const [la, lb] of dividers) for (let d = Math.floor(a[3] / 13) * 13; d < b[3]; d += 13) {
+        for (let d = Math.floor(a[3] / 13) * 13; d < b[3]; d += 13) {
           const lo = Math.max(d, a[3]), hi = Math.min(d + 5, b[3]);
-          if (!layout.junction && hi > lo && !atJunction(lo) && !atJunction(hi)) markGeo.push(ribbon(
-            interpolate((lo - a[3]) / (b[3] - a[3])),
-            interpolate((hi - a[3]) / (b[3] - a[3])), 0.16, 0.09, "#e7e8d6",
-            [la + (lb - la) * (lo - a[3]) / (b[3] - a[3]), la + (lb - la) * (hi - a[3]) / (b[3] - a[3])]));
+          if (layout.junction || lo >= hi || atJunction(lo) || atJunction(hi)) continue;
+          const divLo = dividersAt(lo), divHi = dividersAt(hi);
+          for (let k = 0; k < divLo.length; k++) {
+            markGeo.push(ribbon(
+              interpolate((lo - a[3]) / (b[3] - a[3])),
+              interpolate((hi - a[3]) / (b[3] - a[3])), 0.16, 0.09, "#e7e8d6",
+              [divLo[k], divHi[k]]));
+          }
         }
         if (!atJunction(a[3]) && !atJunction(b[3])) for (const side of [-1, 1]) {
           if (layout[side === -1 ? "right" : "left"]) continue;
-          markGeo.push(ribbon(a, b, 0.12, 0.09, "#e7e8d6", [side * (wa / 2 - 0.3), side * (wb / 2 - 0.3)]));
+          const edgeOffset = (d) => {
+            const divs = dividersAt(d);
+            return side > 0 ? (divs[divs.length - 1] + widthAt(tapers, d, width) / 2) / 2
+              : (divs[0] - widthAt(tapers, d, width) / 2) / 2;
+          };
+          markGeo.push(ribbon(a, b, 0.12, 0.09, "#e7e8d6",
+            [edgeOffset(a[3]), edgeOffset(b[3])]));
         }
         // Yellow box hatching marks genuine angled crossings (prepared
         // `crossing` flag). Legacy assets without the flag fall back to the
@@ -438,21 +463,32 @@ function createChunk(data, bbox) {
             [s * wLo, -s * wHi]));
         }
         const spacing = { motorway: 50, trunk: 45, primary: 45 }[props.highway] || 40;
-        if (lampsAllowed && uncovered && !segment.tunnel && !layout.noLamps) for (let d = Math.ceil((a[3] + 0.01) / spacing) * spacing; d < b[3] - 0.01; d += spacing) {
-          if (atJunction(d)) continue;
-          const t = (d - a[3]) / (b[3] - a[3]), p = interpolate(t), side = Math.floor(d / spacing) % 2 ? 1 : -1;
-          const wD = widthAt(tapers, d, width);
-          const x = p[0] + p[4] * side * (wD / 2 + 1.5), z = p[1] + p[5] * side * (wD / 2 + 1.5);
-          const road = roadAt(x, z, p[2]);
-          const blocked = (road && road.d < road.width / 2 + 0.5) || buildingBases.some((rings) => inPolygon(x, z, rings)) || waterPolygons.some((rings) => inPolygon(x, z, rings));
-          if (blocked) continue;
-          const pole = new THREE.CylinderGeometry(0.08, 0.12, 8, 6); pole.translate(x, p[2] + 4, z); lampGeo.push(pole);
-          const rx = -p[4] * side, rz = -p[5] * side, angle = Math.atan2(-rz, rx);
-          const arm = new THREE.BoxGeometry(2.6, 0.12, 0.12); arm.rotateY(angle); arm.translate(x + rx * 1.3, p[2] + 7.9, z + rz * 1.3); lampGeo.push(arm);
-          const head = new THREE.BoxGeometry(0.7, 0.14, 0.3); head.rotateY(angle); head.translate(x + rx * 2.45, p[2] + 7.82, z + rz * 2.45); lampHeadGeo.push(head);
-          lampPoints.push([x + rx * 2.45, p[2] + 7.75, z + rz * 2.45]);
-          lampGlowGeo.push(lightPool(x + rx * 2.45, p[2], z + rz * 2.45, 5));
-          lampGlowGeo.push(downGlow(x + rx * 2.45, p[2] + 7.7, z + rz * 2.45, 2.8, 6.4));
+        // Deterministic lamp IDs: ${sourceId}:${ordinal} where ordinal is
+        // floor(d/spacing). Skipped candidates don't renumber later ones.
+        if (lampsAllowed && uncovered && !segment.tunnel && !layout.noLamps) {
+          const firstD = Math.ceil((a[3] + 0.01) / spacing) * spacing;
+          const lastD = b[3] - 0.01;
+          const maxOrdinal = Math.floor(lastD / spacing);
+          for (let ord = Math.ceil(firstD / spacing); ord <= maxOrdinal; ord++) {
+            const d = ord * spacing;
+            if (d < a[3] || d > b[3]) continue;
+            if (atJunction(d)) continue;
+            const t = (d - a[3]) / (b[3] - a[3]), p = interpolate(t), side = ord % 2 ? 1 : -1;
+            const wD = widthAt(tapers, d, width);
+            const x = p[0] + p[4] * side * (wD / 2 + 1.5), z = p[1] + p[5] * side * (wD / 2 + 1.5);
+            // Reject if pole base overlaps road corridor, building, or water.
+            const road = roadAt(x, z, p[2]);
+            const blocked = (road && road.d < road.width / 2 + 0.5) || buildingBases.some((rings) => inPolygon(x, z, rings)) || waterPolygons.some((rings) => inPolygon(x, z, rings));
+            if (blocked) continue;
+            const lampId = `${props.sourceId}:${ord}`;
+            const pole = new THREE.CylinderGeometry(0.08, 0.12, 8, 6); pole.translate(x, p[2] + 4, z); pole.userData = { lampId, chunkId: null }; lampGeo.push(pole);
+            const rx = -p[4] * side, rz = -p[5] * side, angle = Math.atan2(-rz, rx);
+            const arm = new THREE.BoxGeometry(2.6, 0.12, 0.12); arm.rotateY(angle); arm.translate(x + rx * 1.3, p[2] + 7.9, z + rz * 1.3); lampGeo.push(arm);
+            const head = new THREE.BoxGeometry(0.7, 0.14, 0.3); head.rotateY(angle); head.translate(x + rx * 2.45, p[2] + 7.82, z + rz * 2.45); lampHeadGeo.push(head);
+            lampPoints.push({ x: x + rx * 2.45, y: p[2] + 7.75, z: z + rz * 2.45, lampId });
+            lampGlowGeo.push(lightPool(x + rx * 2.45, p[2], z + rz * 2.45, 5));
+            lampGlowGeo.push(downGlow(x + rx * 2.45, p[2] + 7.7, z + rz * 2.45, 2.8, 6.4));
+          }
         }
         if (/^(motorway|trunk)$/.test(props.highway || "") && !segment.tunnel)
           for (let d = Math.ceil((a[3] + 0.01) / 400) * 400; d < b[3] - 0.01; d += 400) {
@@ -462,15 +498,26 @@ function createChunk(data, bbox) {
           }
         if (lanes?.total > 1 && !segment.tunnel && !layout.junction) for (let d = Math.ceil((a[3] + 0.01) / 45) * 45; d < b[3] - 0.01; d += 45) {
           if (atJunction(d)) continue;
-          const p = interpolate((d - a[3]) / (b[3] - a[3])), wD = widthAt(tapers, d, width), laneWidth = wD / lanes.total;
+          const p = interpolate((d - a[3]) / (b[3] - a[3])), wD = widthAt(tapers, d, width);
+          const divs = laneDividersAt(tapers, d, wD, lanes);
           const arrow = (lateral, direction) => {
             const x = p[0] + p[4] * lateral, z = p[1] + p[5] * lateral, tx = p[5] * direction, tz = -p[4] * direction;
             markGeo.push(quad([x - tx * 1.6, z - tz * 1.6], [x + tx * 1.6, z + tz * 1.6], 0.24, p[2] + 0.095, "#e7e8d6"));
             markGeo.push(quad([x + tx * 1.55, z + tz * 1.55], [x + tx * 0.55 + p[4] * 0.75, z + tz * 0.55 + p[5] * 0.75], 0.2, p[2] + 0.095, "#e7e8d6"));
             markGeo.push(quad([x + tx * 1.55, z + tz * 1.55], [x + tx * 0.55 - p[4] * 0.75, z + tz * 0.55 - p[5] * 0.75], 0.2, p[2] + 0.095, "#e7e8d6"));
           };
-          for (let n = 0; n < lanes.forward; n++) arrow(wD / 2 - laneWidth * (n + 0.5), 1);
-          for (let n = 0; n < lanes.backward; n++) arrow(-wD / 2 + laneWidth * (n + 0.5), -1);
+          // Forward lanes: divs indices 0..forward-1 correspond to lane centers from left edge
+          // Actually divs are lane boundaries; lane centers are midpoints between them.
+          // Forward lanes are at positive lateral; their boundaries are divs[backward..backward+forward]
+          const fStart = lanes.backward;
+          for (let n = 0; n < lanes.forward; n++) {
+            const lateral = (divs[fStart + n] + divs[fStart + n + 1]) / 2;
+            arrow(lateral, 1);
+          }
+          for (let n = 0; n < lanes.backward; n++) {
+            const lateral = (divs[n] + divs[n + 1]) / 2;
+            arrow(lateral, -1);
+          }
         }
       }
     } else {
@@ -570,7 +617,7 @@ function createChunk(data, bbox) {
   mergeInto(group, tunnelLightGeo, worldMaterials.tunnelLamp);
   mergeInto(group, tunnelGlowGeo, worldMaterials.tunnelGlow);
   mergeInto(group, buildingGeo, worldMaterials.building, true);
-  group.userData = { segments, blocks, lamps: lampPoints, trees: treeColliders };
+  group.userData = { segments, blocks, lamps: lampPoints, trees: treeColliders, tunnelOpenings: chunkTunnelOpenings };
   return group;
 }
 function createAreas(data) {
@@ -623,7 +670,7 @@ function rebuildCollisionLists() {
   // Streaming can complete the missing portion of a local route.
   if (navigation) routeRoadId = null;
   traffic?.syncRoads(roads);
-  updateTunnelOpenings();
+  buildTunnelOpeningsFromChunks();
   updateNightLights();
   trafficDirty = false;
   minimapDirty = false;
@@ -644,17 +691,24 @@ function updateNightLights() {
     nightLights.push(light);
   }
 }
-function updateTunnelOpenings() {
-  // Only open ramps cut the terrain; covered tunnels retain the surface above.
-  const nearby = roads.filter((r) => r.tunnel && Math.max(r.a[2], r.b[2]) > -3.85)
-    .sort((a, b) => Math.min(Math.hypot(state.x - a.a[0], state.z - a.a[1]), Math.hypot(state.x - a.b[0], state.z - a.b[1])) -
-      Math.min(Math.hypot(state.x - b.a[0], state.z - b.a[1]), Math.hypot(state.x - b.b[0], state.z - b.b[1])))
-    .slice(0, 64);
-  tunnelCutout.count.value = nearby.length;
+function buildTunnelOpeningsFromChunks() {
+  // Collect fixed tunnel openings from all loaded chunks. Each chunk was
+  // built with deterministic geometry from prepared roads, so openings don't
+  // move with the player and boundaries match across chunk seams.
+  const openings = [];
+  for (const [chunkId, data] of chunkState) {
+    if (data.userData.tunnelOpenings) {
+      for (const o of data.userData.tunnelOpenings) {
+        openings.push({ a: o.a, b: o.b, width: o.width });
+      }
+    }
+  }
+  // Limit to 64 for the shader uniform array.
+  tunnelCutout.count.value = Math.min(openings.length, 64);
   for (let i = 0; i < 64; i++) {
-    const r = nearby[i];
-    tunnelCutout.segments.value[i].set(r?.a[0] || 0, r?.a[1] || 0, r?.b[0] || 0, r?.b[1] || 0);
-    tunnelCutout.widths.value[i] = r ? r.width / 2 + 1 : 0;
+    const o = openings[i];
+    tunnelCutout.segments.value[i].set(o?.a[0] || 0, o?.a[1] || 0, o?.b[0] || 0, o?.b[1] || 0);
+    tunnelCutout.widths.value[i] = o ? o.width / 2 + 1 : 0;
   }
 }
 function updateMinimapRoads() {
@@ -858,7 +912,7 @@ function pumpStream(frameStart) {
   const moved = Math.hypot(state.x - lastTunnelSync.x, state.z - lastTunnelSync.z);
   if (moved > 80 || now - lastTunnelSync.at > 3000) {
     lastTunnelSync = { x: state.x, z: state.z, at: now };
-    updateTunnelOpenings();
+    buildTunnelOpeningsFromChunks();
   }
 }
 // Forced loads (startup, spawn teleport): everything wanted, fetched with
@@ -1133,6 +1187,7 @@ function resetCar(announce = true) {
     steer: 0,
   };
   scraping = false;
+  waitingForChunk = false;
   let nearest = getNearestRoad(state.x, state.z);
   if (!nearest && spawnSelection) {
     spawnSelection = null;
@@ -1146,6 +1201,14 @@ function resetCar(announce = true) {
     smoothGround = nearest.y;
     activeRoad = nearest;
     nearRoad = nearest;
+    lastSupported = {
+      x: state.x,
+      z: state.z,
+      yaw: state.yaw,
+      y: nearest.y,
+      surfaceId: nearest.id,
+      chunkId: chunkOfSurface(nearest),
+    };
     spawnSelection = { roadId: nearest.featureId, progress: nearest.a[3] + (nearest.b[3] - nearest.a[3]) * nearest.t };
     saveSpawn(manifest.spawn, manifest.spawnTarget, spawnSelection);
   }
@@ -1284,15 +1347,50 @@ function hud() {
   const roadLength = nearRoad && Math.hypot(roadDx, roadDz);
   const travel = nearRoad && (Math.sin(state.yaw) * roadDx - Math.cos(state.yaw) * roadDz);
   const lateral = nearRoad && ((state.x - nearRoad.x) * -roadDz + (state.z - nearRoad.z) * roadDx) / roadLength;
-  const wrongWay = nearRoad?.laneLayout && kmh > 5 && Math.abs(lateral) > 0.5 &&
-    (travel * lateral < 0 || (nearRoad.laneLayout.oneWay && travel * (nearRoad.laneLayout.reverse ? -1 : 1) < 0));
-  $("surface").textContent = wrongWay
+const road = nearRoad;
+  const layout = road?.laneLayout;
+  const inJunction = layout && (layout.junction || layout.crossing);
+  const sharedLane = layout && layout.total === 1 && !layout.oneWay;
+  const stopped = kmh < 1.4; // ~0.4 m/s walking speed
+  const offRoad = !road || road.d >= road.width / 2 + 1;
+  const loading = waitingForChunk || !ready;
+  const unsupportedDir = !layout || (layout.oneWay && layout.reverse && layout.forward === 0);
+
+  // Detect wrong-way: actual motion along lane direction.
+  const roadDx = road?.b[0] - road?.a[0], roadDz = road?.b[1] - road?.a[1];
+  const roadLength = road && Math.hypot(roadDx, roadDz);
+  const travel = road && (Math.sin(state.yaw) * roadDx - Math.cos(state.yaw) * roadDz);
+  const lateral = road && ((state.x - road.x) * -roadDz + (state.z - road.z) * roadDx) / roadLength;
+  let wrongWayNow = false;
+  if (layout && kmh > 5 && Math.abs(lateral) > 0.5 && !inJunction && !sharedLane && !stopped && !loading && !offRoad && !unsupportedDir) {
+    // Two-way: check if moving against the lane direction for our lateral position.
+    // Forward lanes (lateral > 0) should have travel > 0; backward lanes (lateral < 0) should have travel < 0.
+    if (layout.oneWay) {
+      wrongWayNow = travel * (layout.reverse ? -1 : 1) < 0;
+    } else {
+      wrongWayNow = travel * lateral < 0;
+    }
+  }
+
+  // Hysteresis: 1s sustained to activate, 0.5s clear to deactivate.
+  const dtHud = 1 / 60; // approximate frame time
+  if (wrongWayNow) {
+    wrongWayTimer += dtHud;
+    wrongWayClearTimer = 0;
+    if (wrongWayTimer >= 1.0) wrongWayActive = true;
+  } else {
+    wrongWayClearTimer += dtHud;
+    wrongWayTimer = 0;
+    if (wrongWayClearTimer >= 0.5) wrongWayActive = false;
+  }
+
+  $("surface").textContent = wrongWayActive
       ? "WRONG WAY"
-    : nearRoad && nearRoad.d < nearRoad.width / 2 + 1
-      ? firstPerson
+      : road && road.d < road.width / 2 + 1
+        ? firstPerson
         ? "DRIVER VIEW"
         : kmh
-          ? "KEEP LEFT"
+        ? "KEEP LEFT"
           : "READY TO DRIVE"
       : "OFF ROAD";
   $("street").textContent = nearRoad && nearRoad.d < nearRoad.width / 2 + 1
@@ -1389,10 +1487,39 @@ function animate() {
         return { res: "edge", contact };
       return { res: "free", contact };
     };
+    // R2-03: determine which chunk owns a surface (for missing-chunk detection).
+    function chunkOfSurface(contact) {
+      if (!contact) return null;
+      // The surface's featureId maps to a chunk via the manifest.
+      for (const c of manifest.chunks) {
+        if (c.data.features.some((f) => f.id === contact.featureId)) return c.id;
+      }
+      return null;
+    }
+    function chunkLoadedAt(x, z) {
+      // Check if the chunk containing this point is loaded.
+      for (const c of manifest.chunks) {
+        if (x >= c._x0 && x <= c._x1 && z >= c._z0 && z <= c._z1) {
+          return chunkState.has(c.id);
+        }
+      }
+      return false;
+    }
     const acceptMove = (contact) => {
       nearRoad = contact;
       activeRoad = contact;
       smoothGround = contact?.y ?? 0;
+      if (contact) {
+        lastSupported = {
+          x: state.x,
+          z: state.z,
+          yaw: state.yaw,
+          y: contact.y,
+          surfaceId: contact.id,
+          chunkId: chunkOfSurface(contact),
+        };
+        waitingForChunk = false;
+      }
     };
     const stopToast = (kind) => {
       if (now - lastHud > 2000) {
@@ -1414,58 +1541,51 @@ function animate() {
       stepCar(state, input, dt / steps);
       const nx = state.x,
         nz = state.z;
-      const full = probeMove(nx, nz);
-      if (full.res === "free") {
-        acceptMove(full.contact);
-        scraping = false;
-      } else if (full.res === "blocked") {
-        // Rolling collision: slide along the wall on the dominant axis
-        // before giving up, so guard rails and building faces glance the
-        // car instead of dead-stopping it. Scrape damping applies once per
-        // contact, so grinding keeps rolling instead of stalling.
-        const xFirst = Math.abs(nx - oldX) >= Math.abs(nz - oldZ);
-        let slide = xFirst ? probeMove(nx, oldZ) : probeMove(oldX, nz);
-        if (slide.res !== "free")
-          slide = xFirst ? probeMove(oldX, nz) : probeMove(nx, oldZ);
-        if (slide.res === "free") {
-          acceptMove(slide.contact);
-          if (!scraping) {
-            scraping = true;
-            state.speed *= 0.55;
-          }
-        } else {
-          // Glide along the road ribbon: axis slides both fail on
-          // diagonal rails, so project the step onto the road tangent.
-          // ponytail: road tangent proxies the wall normal; sharp curves
-          // or junctions need the real obstacle normal instead.
-          const road = full.contact ?? activeRoad;
-          let glide = null;
-          if (road) {
-            const rx = road.b[0] - road.a[0], rz = road.b[1] - road.a[1];
-            const len = Math.hypot(rx, rz) || 1;
-            const dot = ((nx - oldX) * rx + (nz - oldZ) * rz) / len;
-            glide = probeMove(oldX + (rx / len) * dot, oldZ + (rz / len) * dot);
-          }
-          if (glide?.res === "free") acceptMove(glide.contact);
-          else {
-            state.x = oldX;
-            state.z = oldZ;
-            stopToast(full.kind);
-          }
-          if (!scraping) {
-            scraping = true;
-            state.speed *= 0.55;
-          }
+      // Swept check: probe the path in sub-steps so we never skip a short
+      // cell, wall, cap, or chunk seam. Use the same integration step count.
+      let sweptRes = { res: "free", contact: null };
+      const sweepSteps = Math.max(1, Math.ceil(Math.hypot(nx - oldX, nz - oldZ) / 2));
+      for (let s = 1; s <= sweepSteps; s++) {
+        const t = s / sweepSteps;
+        const sx = oldX + (nx - oldX) * t;
+        const sz = oldZ + (nz - oldZ) * t;
+        const r = probeMove(sx, sz);
+        if (r.res !== "free") {
+          sweptRes = r;
+          break;
         }
-      } else {
-        // Unsupported elevated edge: past a deck end or into a chunk that
-        // has not loaded yet. Hold the last supported position and height
-        // instead of snapping to ground level.
-        state.x = oldX;
-        state.z = oldZ;
-        state.speed *= 0.2;
-        scraping = false;
-        if (!chunkLoadedAt(state.x, state.z)) stopToast("edge");
+      }
+      if (sweptRes.res === "free") {
+        const full = probeMove(nx, nz);
+        if (full.res === "free") {
+          acceptMove(full.contact);
+          scraping = false;
+        } else {
+          sweptRes = full;
+        }
+      }
+      if (sweptRes.res !== "free") {
+        // Restore to last supported pose instead of substep origin.
+        state.x = lastSupported.x;
+        state.z = lastSupported.z;
+        state.yaw = lastSupported.yaw;
+        // If we have a supported surface but its chunk isn't loaded, wait.
+        const supportChunk = lastSupported.chunkId;
+        if (supportChunk && !chunkState.has(supportChunk)) {
+          waitingForChunk = true;
+          if (now - lastHud > 2000) {
+            lastHud = now;
+            toast("Loading road ahead…");
+          }
+        } else if (sweptRes.res === "edge") {
+          // Permanent dead end (unsupported elevated edge).
+          state.speed *= 0.2;
+          scraping = false;
+        } else {
+          // Blocked by building/water/boundary.
+          state.speed *= 0.55;
+          scraping = true;
+        }
       }
       distance += Math.hypot(state.x - oldX, state.z - oldZ) / 1000;
       traffic?.step(dt / steps, state, smoothGround);
@@ -1724,6 +1844,10 @@ async function init() {
       );
     };
     manifest = await json("./data/manifest.json");
+    if (manifest.roadVersion !== EXPECTED_ROAD_SCHEMA)
+      throw new Error(
+        `Road data schema ${manifest.roadVersion} != ${EXPECTED_ROAD_SCHEMA}: rebuild with npm run build`,
+      );
     const preferences = loadPreferences();
     if (preferences.spawn) {
       manifest.spawn = preferences.spawn.spawn;

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { PREPARED_ROAD_SCHEMA_VERSION, prepareAssets, surfacePolygon, taperZones } from "./prepare.mjs";
-import { prepareRoads, roadVisible, laneLayout, nominalHeight } from "./road-network.mjs";
+import { prepareRoads, roadVisible, laneLayout, nominalHeight, project } from "./road-network.mjs";
 import { roadIndex, indexAddRoads, indexRemoveRoads, nearbyRoadway, surfaceAt, retainElevated, pastSegmentEnd, pickNightLights, widthAt, stopLines, hatchBars, findRoute, turnManeuver } from "../app/js/roads.js";
 
 const center = [103.85, 1.29];
@@ -12,6 +12,13 @@ const prepared = prepareRoads(features, center);
 assert(prepared.samples.get("ground").length >= 2);
 assert(prepared.samples.get("bridge")[0][2] >= 4);
 assert(prepared.connections.get("ground").start.includes("bridge"));
+// Shared JS/Python projection fixtures (mirrored in clearance.test.py):
+// R=6378137 Mercator metres about the manifest center, +x east, +z south.
+const fixtureCenter = [103.851, 1.284];
+const projectRound = (p) => project(p, fixtureCenter).map((v) => +v.toFixed(6));
+assert.deepEqual(projectRound([103.85, 1.29]), [-111.319491, -668.085482]);
+assert.deepEqual(projectRound([103.851, 1.284]), [0, 0]);
+assert.deepEqual(projectRound([104.0, 1.35]), [16586.604128, -7349.028163]);
 
 const road = (id, coordinates, properties = {}) => ({
   id, geometry: { type: "LineString", coordinates }, properties: { highway: "primary", ...properties },
@@ -54,19 +61,22 @@ assert(identities.connections.get("identity-a").end.includes("identity-c"));
 
 assert.deepEqual(laneLayout({ highway: "residential" }), {
   forward: 1, backward: 1, oneWay: false, reverse: false, total: 2, turnLanes: "", maxspeed: "",
+  source: "fallback", warnings: ["ESTIMATED_LANES: untagged two-way defaults to 1+1"],
 });
 assert.deepEqual(laneLayout({ highway: "primary", oneway: "yes", lanes: "3", "turn:lanes": "left|through|right", maxspeed: "50" }), {
   forward: 3, backward: 0, oneWay: true, reverse: false, total: 3,
-  turnLanes: "left|through|right", maxspeed: "50",
+  turnLanes: "left|through|right", maxspeed: "50", source: "tagged",
 });
 assert.deepEqual(laneLayout({ highway: "primary", "lanes:forward": "2" }), {
   forward: 2, backward: 1, oneWay: false, reverse: false, total: 3, turnLanes: "", maxspeed: "",
+  source: "tagged",
 });
 assert.deepEqual(laneLayout({ highway: "service", oneway: "-1", lanes: "1" }), {
   forward: 0, backward: 1, oneWay: true, reverse: true, total: 1, turnLanes: "", maxspeed: "",
+  source: "tagged",
 });
 assert.equal(laneLayout({ highway: "motorway", oneway: "no" }).oneWay, false);
-assert.deepEqual(laneLayout({ highway: "residential", lanes: "x" }).warnings, ["invalid lanes"]);
+assert.deepEqual(laneLayout({ highway: "residential", lanes: "x" }).warnings, ["INVALID_LANE_COUNT: lanes=x"]);
 
 const layered = prepareRoads([
   road("layer-deck", [[103.852, 1.29], [103.8521, 1.29]], { layer: 1 }),
@@ -258,7 +268,7 @@ assert(!fittedTunnels.segments.get('lower')[0].left, 'Adjacent tunnels must reta
 
 // Shared preparation entry: one representation for rendering, contact,
 // clearance widths and spawn data, with explicit surface polygons.
-assert.equal(PREPARED_ROAD_SCHEMA_VERSION, 10);
+assert.equal(PREPARED_ROAD_SCHEMA_VERSION, 11);
 const sharedFeatures = [
   road('shared-ground', [[103.85, 1.29], [103.851, 1.29]], { highway: 'primary' }),
   road('shared-bridge', [[103.851, 1.29], [103.852, 1.29]], { highway: 'primary', bridge: 'yes' }),
@@ -314,12 +324,13 @@ console.log("covered levels and elevated edge retention checks passed");
 assert.equal(laneLayout({ highway: "primary", oneway: "yes", width: "12" }).forward, 3);
 const inconsistent = laneLayout({ highway: "residential", lanes: "3", "lanes:forward": "2", "lanes:backward": "2" });
 assert.deepEqual([inconsistent.forward, inconsistent.backward, inconsistent.total], [1, 1, 2]);
-assert.deepEqual(inconsistent.warnings, ["inconsistent lanes"]);
+assert.deepEqual(inconsistent.warnings, ["INCONSISTENT_LANES: forward+backward (4) != total (3)"]);
 const overfilled = laneLayout({ highway: "residential", lanes: "2", "lanes:forward": "2" });
 assert.deepEqual([overfilled.forward, overfilled.backward], [1, 1]);
-assert.deepEqual(overfilled.warnings, ["inconsistent lanes"]);
+assert.deepEqual(overfilled.warnings, ["INCONSISTENT_LANES: forward+backward (3) != total (2)"]);
 assert.deepEqual(laneLayout({ highway: "residential", lanes: "3" }), {
   forward: 2, backward: 1, oneWay: false, reverse: false, total: 3, turnLanes: "", maxspeed: "",
+  source: "tagged",
 });
 
 // Night lighting serves at most the eight nearest lamp heads within 100 m.
@@ -406,6 +417,13 @@ assert.equal(zone.w0, 10.5, "Interior side keeps full width");
 assert.equal(zone.w1, 7, "Boundary matches the narrower road exactly");
 assert.equal(zone.d1, wide.samples.at(-1)[3]);
 assert.equal(widthAt(wide.tapers, zone.d1, wide.width), 7);
+// The explicit surface follows the taper: full width at the interior end,
+// narrowed width at the merge boundary.
+const wideRing = surfacePolygon(wide.samples, wide.width, wide.tapers);
+const pairWidth = (l, r) => Math.hypot(l[0] - r[0], l[1] - r[1]);
+const n = wide.samples.length;
+assert(Math.abs(pairWidth(wideRing[0], wideRing[2 * n - 1]) - 10.5) < 0.01);
+assert(Math.abs(pairWidth(wideRing[n - 1], wideRing[n]) - 7) < 0.01);
 const forked = prepareAssets([
   road("merge-wide", [[103.849, 1.29], mergeJunction], { highway: "primary", lanes: "3", endNodeId: "merge-j" }),
   road("merge-narrow", [mergeJunction, mergeEnd], { highway: "primary", lanes: "2", startNodeId: "merge-j" }),
@@ -556,3 +574,56 @@ assert.equal(gantry(0, 0, 0, 0, 12, 0).length, 5, "Missing lane data falls back 
 const gantAgain = gantry(0, 0, 0, 0, 12, 3);
 assert.equal(gantAgain[0].attributes.position.array[0], gant[0].attributes.position.array[0]);
 console.log("gantry checks passed");
+
+// Release pipeline: schema agreement, staged generation, failure safety.
+const { readFileSync: _read, writeFileSync: _write, mkdirSync: _mkdir, mkdtempSync: _mkdtemp } = await import("node:fs");
+const { tmpdir: _tmpdir } = await import("node:os");
+const { join: _join } = await import("node:path");
+const { buildInto, generationId } = await import("./build.mjs");
+// All three schema declarations must agree (JS build, browser guard, importer).
+const appSource = _read(new URL("../app/js/app.js", import.meta.url), "utf8");
+const importerSource = _read(new URL("./import_osm.py", import.meta.url), "utf8");
+assert.equal(appSource.match(/EXPECTED_ROAD_SCHEMA = (\d+)/)[1], String(PREPARED_ROAD_SCHEMA_VERSION));
+assert.equal(importerSource.match(/EXPECTED_SCHEMA=(\d+)/)[1], String(PREPARED_ROAD_SCHEMA_VERSION));
+// Deterministic generation IDs for identical inputs.
+assert.equal(generationId(first), generationId(second));
+// Staged build: fixture dirs in, validated generation out; source width tag
+// preserved beside the derived width; corrupt input throws and the previous
+// output directory is left untouched.
+const stageRoot = _mkdtemp(_join(_tmpdir(), "stage-test-"));
+const fixtureRoad = (id, coordinates, properties = {}) => ({
+  id, geometry: { type: "LineString", coordinates }, properties: { highway: "primary", ...properties },
+});
+const writeStage = (roads) => {
+  _mkdir(_join(stageRoot, "public", "data"), { recursive: true });
+  _mkdir(_join(stageRoot, "app", "js"), { recursive: true });
+  _write(_join(stageRoot, "public", "data", "manifest.json"), JSON.stringify({
+    center, chunks: [{ id: "c", file: "c.geojson" }],
+  }));
+  _write(_join(stageRoot, "public", "data", "c.geojson"), JSON.stringify({
+    type: "FeatureCollection", features: roads,
+  }));
+  for (const js of ["app.js", "geometry.js", "traffic.js"])
+    _write(_join(stageRoot, "app", "js", js), "// fixture");
+};
+writeStage([
+  fixtureRoad("tagged", [[103.85, 1.29], [103.851, 1.29]], { width: "6.2" }),
+  fixtureRoad("plain", [[103.852, 1.29], [103.853, 1.29]]),
+]);
+const stagedOut = _join(stageRoot, "dist");
+const summary = buildInto(_join(stageRoot, "public"), _join(stageRoot, "app"), stagedOut);
+assert.equal(summary.roadVersion, PREPARED_ROAD_SCHEMA_VERSION);
+assert.match(summary.generation, /^[0-9a-f]{16}$/);
+const stagedManifest = JSON.parse(_read(_join(stagedOut, "data", "manifest.json"), "utf8"));
+assert.equal(stagedManifest.generation, summary.generation);
+const stagedFeatures = JSON.parse(_read(_join(stagedOut, "data", "c.geojson"), "utf8")).features;
+const stagedFeature = stagedFeatures.find((f) => f.id === "tagged");
+assert.equal(stagedFeature.properties.width, "6.2", "Raw source width tag must survive the build");
+assert.equal(stagedFeature.properties.preparedWidth, 6.2, "Explicit width wins as the derived width");
+assert.equal(stagedFeatures.find((f) => f.id === "plain").properties.preparedWidth, 7,
+  "Default 2-lane width lives beside the (absent) raw tag");
+const before = _read(_join(stagedOut, "data", "c.geojson"), "utf8");
+_write(_join(stageRoot, "public", "data", "c.geojson"), "{corrupt");
+assert.throws(() => buildInto(_join(stageRoot, "public"), _join(stageRoot, "app"), _join(stageRoot, "dist2")));
+assert.equal(_read(_join(stagedOut, "data", "c.geojson"), "utf8"), before, "Failed preparation must preserve valid output");
+console.log("release pipeline checks passed");

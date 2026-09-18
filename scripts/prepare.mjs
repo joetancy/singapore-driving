@@ -11,10 +11,11 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { prepareRoads, roadVisible, laneLayout, roadWidth } from "./road-network.mjs";
 import { prepareLayout } from "./road-layout.mjs";
+import { widthAt } from "../app/js/road-shape.js";
 
 // Increment when derived road output changes shape or meaning; the build
 // writes this into the manifest and requires a complete rebuild on mismatch.
-export const PREPARED_ROAD_SCHEMA_VERSION = 10;
+export const PREPARED_ROAD_SCHEMA_VERSION = 11;
 
 const sourceId = (id) => String(id).replace(/-\d+-\d+$/, "");
 
@@ -95,9 +96,11 @@ export function prepareAssets(features, center) {
 
 // JSON CLI for scripts/import_osm.py so elevation preparation precedes
 // clearance with identical heights: stdin {center, features: [{id,
-// coordinates, properties}]} → stdout {version, widths, samples, warnings}.
-// Samples are [x, z, height, distance, normalX, normalZ] metres in the same
-// projection the browser uses. Only runs when executed directly.
+// coordinates, properties}]} → stdout {version, widths, samples, tapers,
+// warnings}. Samples are [x, z, height, distance, normalX, normalZ] metres in
+// the same projection the browser uses; tapers carry the final width profile
+// so Python clearance never reconstructs it from raw tags. Only runs when
+// executed directly.
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const { center, features } = JSON.parse(readFileSync(0, "utf8"));
   const geo = features.map((f) => ({
@@ -105,24 +108,35 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     geometry: { type: "LineString", coordinates: f.coordinates },
   }));
   const prepared = prepareAssets(geo, center);
-  const samples = {}, widths = {};
+  const samples = {}, widths = {}, tapers = {};
   for (const r of prepared.roads) {
     samples[r.id] = r.samples;
     widths[r.id] = r.width;
+    if (r.tapers?.length) tapers[r.id] = r.tapers;
   }
-  process.stdout.write(JSON.stringify({ version: prepared.version, widths, samples, warnings: prepared.warnings }));
+  process.stdout.write(JSON.stringify({ version: prepared.version, widths, samples, tapers, warnings: prepared.warnings }));
 }
 
 // Explicit surface polygon from prepared cross-sections, independent of any
 // Three.js mesh. Consecutive samples share cross-section normals, so joining
 // left/right edges sample-to-sample leaves no gaps; the ring closes across
 // the first and last cross-sections, retaining endpoint caps that prevent
-// driving beyond a deck end. Returns a closed [x, z] ring.
-export function surfacePolygon(samples, width) {
+// driving beyond a deck end. Width is evaluated through taper zones at every
+// sample so the polygon matches the rendered deck. Normals are unitized
+// to represent the true physical half-width (sample normals include miter
+// scaling for rendering joins). Returns a closed [x, z] ring.
+export function surfacePolygon(samples, width, tapers = []) {
   if (!samples || samples.length < 2) return [];
-  const half = width / 2;
-  const left = samples.map((p) => [p[0] + p[4] * half, p[1] + p[5] * half]);
-  const right = samples.map((p) => [p[0] - p[4] * half, p[1] - p[5] * half]);
+  const left = samples.map((p) => {
+    const half = widthAt(tapers, p[3], width) / 2;
+    const len = Math.hypot(p[4], p[5]) || 1;
+    return [p[0] + (p[4] / len) * half, p[1] + (p[5] / len) * half];
+  });
+  const right = samples.map((p) => {
+    const half = widthAt(tapers, p[3], width) / 2;
+    const len = Math.hypot(p[4], p[5]) || 1;
+    return [p[0] - (p[4] / len) * half, p[1] - (p[5] / len) * half];
+  });
   const ring = [...left, ...right.reverse()];
   ring.push([...ring[0]]);
   return ring;

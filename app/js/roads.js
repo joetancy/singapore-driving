@@ -215,10 +215,14 @@ export function stopLines(sx, sz, y, dx, dz, width, laneLayout) {
 }
 
 // Night lighting budget: at most eight non-shadow-casting lights for the
-// nearest lamp heads within 100 m.
+// nearest lamp heads within 100 m. Lamps can be [{x,y,z,lampId}] or [x,y,z].
 export function pickNightLights(lamps, x, z, limit = 8, radius = 100) {
   return lamps
-    .map((p) => ({ p, d: Math.hypot(p[0] - x, p[2] - z) }))
+    .map((p) => {
+      const px = Array.isArray(p) ? p[0] : p.x;
+      const pz = Array.isArray(p) ? p[2] : p.z;
+      return { p, d: Math.hypot(px - x, pz - z) };
+    })
     .filter(({ d }) => d <= radius)
     .sort((a, b) => a.d - b.d)
     .slice(0, limit)
