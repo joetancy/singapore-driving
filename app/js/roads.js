@@ -109,11 +109,9 @@ export function surfaceAt(index, x, z, active = null, height = 0) {
     const p = nearestPoint(x, z, r.a, r.b), y = cellHeight(r.cell, x, z);
     if (y === null) continue;
     const linked = connected.has(r.id);
-    if (active && !linked) {
-      // Only ground-level junctions allow transfers without an explicit link.
-      // Similar source IDs alone never connect stacked or looping roads.
-      if (Math.max(Math.abs(y), Math.abs(height)) > 0.3 || Math.abs(y - height) > 0.08) continue;
-    }
+    // Proximity and equal height are not connectivity evidence. Ground-road
+    // transfers must be represented by same-path provenance or connections.
+    if (active && !linked) continue;
     if (Math.abs(y - height) > 0.6) continue;
     const score = p.d + Math.abs(y - height) * 8 - (active?.id === r.id ? 0.75 : 0);
     if (!best || score < best.score) best = { ...r, ...p, y, score };

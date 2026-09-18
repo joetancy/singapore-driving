@@ -244,6 +244,12 @@ assert.equal(lostEnd.x, 100);
 const exiting = { id: 'exit', featureId: 'exit', connections: ['tunnel'], a: [100, 0, -4], b: [150, 0, 0], width: 10, tunnel: true };
 const connectedTunnel = { ...tunnelEdge, connections: ['exit'] };
 assert(drivingContact(roadIndex([connectedTunnel, exiting]), {x: 101, z: 0}, connectedTunnel, -4).y > -4);
+const unlinkedGround = [
+  { id: 'ground-a', featureId: 'a', a: [0, 0, 0], b: [20, 0, 0], width: 10, connections: [] },
+  { id: 'ground-b', featureId: 'b', a: [20, 0, 0], b: [40, 0, 0], width: 10, connections: [] },
+];
+assert.equal(surfaceAt(roadIndex(unlinkedGround), 21, 0, unlinkedGround[0], 0), null,
+  'Equal-height proximity must not create an unlinked transfer');
 
 const parallelSamples = new Map([
   ['lower', [[0, 0, 0, 0, 0, 1], [20, 0, 0, 20, 0, 1]]],
