@@ -21,7 +21,7 @@ python -m pip install 'shapely>=2,<3'
 python scripts/import_osm.py singapore.osm --boundary singapore-boundary.geojson
 ```
 
-Node is also required: elevation preparation runs the shared `scripts/prepare.mjs` entry point before building-clearance so the importer and the static build use identical road heights, widths and cross-section corridors. Without Node the importer falls back to approximate ground-only clearance and reports it.
+Node and Python Shapely are required for release-quality preparation: elevation preparation runs the shared `scripts/prepare.mjs` entry point before exact building clearance so the importer and static build use identical road heights, widths and cross-section corridors. Missing Node, Shapely, or failed exact preparation is an error. The importer-only `--allow-approximate` flag is a development escape hatch and is never valid for release output.
 
 The importer clips again to the supplied boundary, reconstructs multipolygon relations and holes, preserves OSM tags in detailed chunks, segments roads, and writes 500 m chunks, simplified overview layers, the boundary, manifest and source provenance. It sets `mode: osm`, switching the visible attribution to OpenStreetMap. Keep the input snapshot and its ODbL provenance. The derivative GeoJSON database is in `public/data/`.
 
@@ -45,4 +45,4 @@ The loader fetches nearby static chunks and unloads distant building/road meshes
 
 ## Validation
 
-Run `npm test`, `npm run check`, and `npm run build`. With Shapely installed, also run `python scripts/clearance.test.py`. These checks cover road preparation, surface contact, lane normalization, and importer building-clearance geometry.
+Run `npm test`, `npm run check`, `python scripts/clearance.test.py`, and `npm run build`. CI installs Python Shapely and NumPy before the build. These checks cover road preparation, surface contact, lane normalization, exact staged building-clearance geometry, and output validation.
