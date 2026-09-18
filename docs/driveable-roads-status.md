@@ -8,7 +8,7 @@ manual browser, real-device, route, and performance checks were intentionally
 not run because they are reserved for the user.
 
 - Schema: 12
-- Latest build generation: `6523f3a110b01316`
+- Latest build generation: `f70513f9a89e6c66`
 - `npm test`: PASS
 - `npm run check`: PASS
 - `python3 scripts/clearance.test.py`: PASS
@@ -23,6 +23,8 @@ not run because they are reserved for the user.
   exact staged Python clearance before publishing the new generation.
 - Prepared road samples, widths, taper profiles, structures, projection
   metadata, and deterministic surface-cell triangles are shared by the build.
+- Importer road segments preserve ordered endpoint node identity through
+  boundary splitting and chunk segmentation.
 - Clearance preserves source footprints/tags, computes height-aware bands from
   prepared road cells, keeps holes/parts, and records structured warnings.
 - Runtime validates schema/generation-qualified data and renders per-band
