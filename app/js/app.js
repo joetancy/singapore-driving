@@ -14,7 +14,7 @@ import {
 } from "./geometry.js";
 import { loadPreferences, saveNight, saveSpawn, loadTraffic, saveTraffic, loadNav, saveNav, clearNav } from "./storage.js";
 import { createTraffic } from "./traffic.js";
-import { roadIndex, indexAddRoads, indexRemoveRoads, surfaceAt, sampleHeight, drivingContact, retainElevated, pickNightLights, widthAt, hatchBars, findRoute, turnManeuver } from "./roads.js";
+import { roadIndex, indexAddRoads, indexRemoveRoads, nearbyRoadway, surfaceAt, sampleHeight, drivingContact, retainElevated, pickNightLights, widthAt, hatchBars, findRoute, turnManeuver } from "./roads.js";
 import { createSpawnPicker } from "./spawn-map.js";
 import {
   clamp,
@@ -170,6 +170,20 @@ function addTunnelPortal(a, b, width, frames, insets) {
   frames.push(orientedBox(w + 2.3, 0.25, 1.4, x, threshold + 3.62, z, yaw));
   insets.push(orientedBox(w + 1.1, 0.08, 1.44, x, threshold + 3.46, z, yaw));
 }
+// Greenery clearance for one candidate tree of canopy height `top` against a
+// nearby roadway ({d, width, a, b} from roadAt or nearbyRoadway). Trunks stay
+// out of the corridor; canopies stay out from under low decks they would
+// pierce; open cuttings stay clear while roofed tunnels permit surface trees.
+function clearOfRoadway(road, top) {
+  if (!road) return true;
+  const half = road.width / 2;
+  if (road.d < half + 1.2) return false;
+  const yMax = Math.max(road.a[2], road.b[2]),
+    yMin = Math.min(road.a[2], road.b[2]);
+  if (yMax > 0.3 && yMin < top && road.d < half + 3.2) return false;
+  if (yMin < -0.3 && yMax > -3.85 && road.d < half + 2.5) return false;
+  return true;
+}
 function createChunk(data, bbox) {
   const group = new THREE.Group(),
     buildingGeo = [],
@@ -228,13 +242,17 @@ function createChunk(data, bbox) {
         if (x < minX || x > maxX || z < minZ || z > maxZ) continue;
         const park = areas.some((ar) => ar.kind === "park" && inPolygon(x, z, ar.rings));
         if (h % 100 >= (park ? 50 : 14)) continue;
-        const road = roadAt(x, z);
-        if (road && (road.d < road.width / 2 + 1.2 || road.y > 1.5)) continue;
-        if (buildingBases.some((rings) => inPolygon(x, z, rings))) continue;
-        if (waterPolygons.some((rings) => inPolygon(x, z, rings))) continue;
         const palm = (h & 1) === 0;
         const scale = 0.85 + ((h >> 16) % 50) / 100;
-        treeSpots.push({ x, z, palm, scale, rot: (h % 628) / 100, top: (palm ? 4.5 : 5.9) * scale });
+        const top = (palm ? 4.5 : 5.9) * scale;
+        // Local roads plus already-loaded neighbours (road pieces are filed
+        // by centroid, so a piece jutting across the tile border is missing
+        // from this chunk's own features).
+        if (!clearOfRoadway(roadAt(x, z), top)) continue;
+        if (!clearOfRoadway(nearbyRoadway(surfaces, x, z), top)) continue;
+        if (buildingBases.some((rings) => inPolygon(x, z, rings))) continue;
+        if (waterPolygons.some((rings) => inPolygon(x, z, rings))) continue;
+        treeSpots.push({ x, z, palm, scale, rot: (h % 628) / 100, top });
       }
   }
   for (const f of data.features) {
@@ -870,6 +888,9 @@ async function ensureChunksLoaded() {
     if (!r) continue;
     readyChunks.delete(c.id);
     insertChunkGroup(c.id, createChunk(r.data, c.bbox));
+    // Attach incrementally (nearest first) so each chunk's greenery
+    // clearance sees already-built neighbours, not just its own features.
+    attachChunk(c.id);
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
   rebuildCollisionLists();

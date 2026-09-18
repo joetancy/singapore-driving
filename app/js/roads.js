@@ -120,6 +120,25 @@ export function surfaceAt(index, x, z, active = null, height = 0) {
   return best;
 }
 
+// Nearest roadway segment with no height or connectivity gates, for
+// clearance checks (greenery, props) that must see every nearby ribbon,
+// including elevated decks and open cuttings. Indexed: only the 3x3 cells
+// around the point are scanned.
+export function nearbyRoadway(index, x, z) {
+  const cellX = Math.floor(x / 50), cellZ = Math.floor(z / 50);
+  const seen = new Set();
+  let best = null;
+  for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+    for (const r of index.cells.get(`${cellX + dx},${cellZ + dz}`) || []) {
+      if (seen.has(r.id)) continue;
+      seen.add(r.id);
+      const p = nearestPoint(x, z, r.a, r.b);
+      if (!best || p.d < best.d) best = { ...r, ...p, y: sampleHeight(r, p.t) };
+    }
+  }
+  return best;
+}
+
 export const mapLevel = (width) => width > 15000 ? 0 : width > 3000 ? 1 : 2;
 export const visibleRoad = (r, level) => level === 2 ||
   (level === 0 ? /^(motorway|trunk|primary)/ : /^(motorway|trunk|primary|secondary|tertiary)/).test(r.highway);

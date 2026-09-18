@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { PREPARED_ROAD_SCHEMA_VERSION, prepareAssets, surfacePolygon, taperZones } from "./prepare.mjs";
 import { prepareRoads, roadVisible, laneLayout, nominalHeight } from "./road-network.mjs";
-import { roadIndex, surfaceAt, retainElevated, pastSegmentEnd, pickNightLights, widthAt, stopLines, hatchBars, findRoute, turnManeuver } from "../app/js/roads.js";
+import { roadIndex, indexAddRoads, indexRemoveRoads, nearbyRoadway, surfaceAt, retainElevated, pastSegmentEnd, pickNightLights, widthAt, stopLines, hatchBars, findRoute, turnManeuver } from "../app/js/roads.js";
 
 const center = [103.85, 1.29];
 const features = [
@@ -97,6 +97,23 @@ const crossing = [
   { id: "north", featureId: "north", connections: [], a: [0, -20, -4], b: [0, 20, -4], width: 6 },
 ];
 assert.equal(surfaceAt(roadIndex(crossing), 0, 5, crossing[0], -4), null);
+// Greenery clearance sees every nearby ribbon: elevated decks and cuttings
+// are reported (surfaceAt would gate them out), and index add/remove round-trips.
+const deckRoads = [
+  { id: "deck", featureId: "deck", connections: [], a: [-50, 0, 6], b: [50, 0, 6], width: 12 },
+];
+const deckIndex = roadIndex(deckRoads);
+assert.equal(nearbyRoadway(deckIndex, 4, 0)?.id, "deck");
+assert.equal(nearbyRoadway(deckIndex, 4, 0)?.y, 6);
+assert.equal(nearbyRoadway(roadIndex([]), 4, 0), null);
+indexAddRoads(deckIndex, [
+  { id: "deck2", featureId: "deck2", connections: [], a: [-50, 200, 0], b: [50, 200, 0], width: 8 },
+  deckRoads[0],
+]);
+assert.equal(deckIndex.byId.size, 2, "re-adding a segment must not duplicate it");
+indexRemoveRoads(deckIndex, ["deck"]);
+assert.equal(nearbyRoadway(deckIndex, 4, 0), null);
+assert.equal(nearbyRoadway(deckIndex, 4, 200)?.id, "deck2");
 const crossingLevels = prepareRoads([
   road("below-in", [[103.849, 1.29], junction], { tunnel: "yes" }),
   road("below-out", [junction, [103.851, 1.29]], { tunnel: "yes" }),
