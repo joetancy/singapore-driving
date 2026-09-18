@@ -1208,7 +1208,7 @@ function resetCar(announce = true) {
       yaw: state.yaw,
       y: nearest.y,
       surfaceId: nearest.id,
-      chunkId: chunkOfSurface(nearest),
+      chunkId: nearest.chunkId || null,
     };
     spawnSelection = { roadId: nearest.featureId, progress: nearest.a[3] + (nearest.b[3] - nearest.a[3]) * nearest.t };
     saveSpawn(manifest.spawn, manifest.spawnTarget, spawnSelection);
@@ -1483,24 +1483,6 @@ function animate() {
         return { res: "edge", contact };
       return { res: "free", contact };
     };
-    // R2-03: determine which chunk owns a surface (for missing-chunk detection).
-    function chunkOfSurface(contact) {
-      if (!contact) return null;
-      // The surface's featureId maps to a chunk via the manifest.
-      for (const c of manifest.chunks) {
-        if (c.data.features.some((f) => f.id === contact.featureId)) return c.id;
-      }
-      return null;
-    }
-    function chunkLoadedAt(x, z) {
-      // Check if the chunk containing this point is loaded.
-      for (const c of manifest.chunks) {
-        if (x >= c._x0 && x <= c._x1 && z >= c._z0 && z <= c._z1) {
-          return chunkState.has(c.id);
-        }
-      }
-      return false;
-    }
     const acceptMove = (contact) => {
       nearRoad = contact;
       activeRoad = contact;
@@ -1512,7 +1494,7 @@ function animate() {
           yaw: state.yaw,
           y: contact.y,
           surfaceId: contact.id,
-          chunkId: chunkOfSurface(contact),
+          chunkId: contact.chunkId || null,
         };
         waitingForChunk = false;
       }
