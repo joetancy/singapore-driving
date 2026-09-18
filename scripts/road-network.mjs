@@ -32,7 +32,7 @@ export function roadWidth(properties = {}) {
   return Math.min(32, laneCount(properties) * LANE_WIDTH);
 }
 // Parse a lane count value: returns { value: int|null, confidence: "exact"|"estimated"|"unsupported", source: string }.
-function parseLaneCount(value) {
+function parseLaneCount(value, allowZero = false) {
   if (value == null) return { value: null, confidence: "unsupported", source: "" };
   const str = String(value).trim();
   // Reject unsupported formats: ranges (2;3), decimals (1.5), conditionals.
@@ -40,7 +40,8 @@ function parseLaneCount(value) {
     return { value: null, confidence: "unsupported", source: str };
   }
   const n = Number(str);
-  if (Number.isInteger(n) && n > 0) return { value: n, confidence: "exact", source: str };
+  if (Number.isInteger(n) && (n > 0 || (allowZero && n === 0)))
+    return { value: n, confidence: "exact", source: str };
   return { value: null, confidence: "unsupported", source: str };
 }
 
@@ -50,12 +51,12 @@ function parseLaneCount(value) {
 //   source: "tagged"|"estimated"|"fallback", warnings? }.
 export function laneLayout(properties = {}) {
   const explicitNo = properties.oneway === "no" || properties.oneway === "0";
-  const oneWay = !explicitNo && (properties.oneway === "yes" || properties.oneway === "1" ||
+  const oneWay = !explicitNo && (properties.oneway === "yes" || properties.oneway === "1" || properties.oneway === "-1" ||
     properties.junction === "roundabout" || /^motorway/.test(properties.highway || ""));
   const reverse = properties.oneway === "-1";
 
-  const fwdParsed = parseLaneCount(properties["lanes:forward"]);
-  const bwdParsed = parseLaneCount(properties["lanes:backward"]);
+  const fwdParsed = parseLaneCount(properties["lanes:forward"], true);
+  const bwdParsed = parseLaneCount(properties["lanes:backward"], true);
   const totalParsed = parseLaneCount(properties.lanes);
 
   let forward = fwdParsed.value, backward = bwdParsed.value, total = totalParsed.value;
@@ -66,21 +67,24 @@ export function laneLayout(properties = {}) {
   if (bwdParsed.confidence !== "exact" && bwdParsed.source) warnings.push(`INVALID_LANE_COUNT: lanes:backward=${bwdParsed.source}`);
   if (totalParsed.confidence !== "exact" && totalParsed.source) warnings.push(`INVALID_LANE_COUNT: lanes=${totalParsed.source}`);
 
-  const widthDerived = () => Math.max(1, Math.round(roadWidth(properties) / LANE_WIDTH));
+  const widthDerived = () => Math.max(1, Math.round(roadWidth(properties) / 3.2));
 
   if (oneWay) {
     // One-way: all travel lanes in the permitted direction.
-    if (forward != null) {
-      // lanes:forward given explicitly.
+    const permitted = reverse ? backward : forward;
+    let lanesInDirection;
+    if (permitted != null && permitted > 0) {
+      lanesInDirection = permitted;
     } else if (total != null) {
-      forward = total;
+      lanesInDirection = total;
     } else {
       // Derive from width with LANE_WIDTH target.
-      forward = widthDerived();
+      lanesInDirection = widthDerived();
       source = "estimated";
       warnings.push(`ESTIMATED_LANES: one-way derived from width`);
     }
-    backward = 0;
+    forward = reverse ? 0 : lanesInDirection;
+    backward = reverse ? lanesInDirection : 0;
   } else {
     // Two-way.
     if (forward != null && backward != null) {

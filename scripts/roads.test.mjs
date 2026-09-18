@@ -327,7 +327,12 @@ console.log("covered levels and elevated edge retention checks passed");
 
 // Width-derived one-way counts use the fixed 3.5 m lane width; impossible
 // directional totals report and fall back to the class default.
-assert.equal(laneLayout({ highway: "primary", oneway: "yes", width: "12" }).forward, 3);
+assert.equal(laneLayout({ highway: "primary", oneway: "yes", width: "12" }).forward, 4);
+assert.deepEqual(laneLayout({ highway: "primary", oneway: "-1", "lanes:forward": "0", "lanes:backward": "2" }), {
+  forward: 0, backward: 2, oneWay: true, reverse: true, total: 2, turnLanes: "", maxspeed: "", source: "tagged",
+});
+assert.equal(laneLayout({ highway: "primary", oneway: "yes", width: "10" }).forward, 3,
+  "Width-derived one-way lanes use the 3.2 m target");
 const inconsistent = laneLayout({ highway: "residential", lanes: "3", "lanes:forward": "2", "lanes:backward": "2" });
 assert.deepEqual([inconsistent.forward, inconsistent.backward, inconsistent.total], [1, 1, 2]);
 assert.deepEqual(inconsistent.warnings, ["INCONSISTENT_LANES: forward+backward (4) != total (3)"]);
