@@ -684,7 +684,8 @@ function updateNightLights() {
   const lamps = pickNightLights(
     [...chunkState.values()].flatMap((c) => c.group?.userData.lamps || []),
     state.x, state.z);
-  for (const [x, y, z] of lamps) {
+  for (const lamp of lamps) {
+    const { x, y, z } = Array.isArray(lamp) ? { x: lamp[0], y: lamp[1], z: lamp[2] } : lamp;
     const light = new THREE.PointLight("#ffe6a5", 1.2, 100, 2);
     light.position.set(x, y, z);
     scene.add(light);
@@ -696,9 +697,9 @@ function buildTunnelOpeningsFromChunks() {
   // built with deterministic geometry from prepared roads, so openings don't
   // move with the player and boundaries match across chunk seams.
   const openings = [];
-  for (const [chunkId, data] of chunkState) {
-    if (data.userData.tunnelOpenings) {
-      for (const o of data.userData.tunnelOpenings) {
+  for (const [, data] of chunkState) {
+    if (data.group?.userData?.tunnelOpenings) {
+      for (const o of data.group.userData.tunnelOpenings) {
         openings.push({ a: o.a, b: o.b, width: o.width });
       }
     }
